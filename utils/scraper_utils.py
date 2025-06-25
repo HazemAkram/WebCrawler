@@ -1,5 +1,7 @@
 import json
 import os
+import hashlib
+import re
 
 import aiofiles
 import aiohttp
@@ -9,6 +11,13 @@ from typing import List, Set, Tuple
 from fake_useragent import UserAgent
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
+
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+import re
+
+from cleaner import pdf_processing
+
+from dotenv import load_dotenv
 
 from crawl4ai import (
     AsyncWebCrawler,
@@ -24,21 +33,65 @@ from crawl4ai import (
 from models.venue import Venue
 from utils.data_utils import is_complete_venue, is_duplicate_venue
 
+load_dotenv()
+
+def sanitize_folder_name(product_name: str) -> str:
+    """
+    Sanitizes a product name to be used as a folder name.
+    Removes or replaces invalid characters that could cause folder creation issues.
+    
+    Args:
+        product_name (str): The original product name
+        
+    Returns:
+        str: Sanitized folder name safe for filesystem use
+    """
+    # Remove or replace invalid characters for folder names
+    # Windows: < > : " | ? * \ /
+    # Unix/Linux: / (forward slash)
+    # Common problematic characters: \ / : * ? " < > |
+    
+    # Replace backslashes and forward slashes with underscores
+    sanitized = product_name.replace('\\', '_').replace('/', '_')
+    
+    # Replace other invalid characters
+    invalid_chars = r'[<>:"|?*]'
+    sanitized = re.sub(invalid_chars, '_', sanitized)
+    
+    # Remove leading/trailing spaces and dots
+    sanitized = sanitized.strip(' .')
+    
+    # Replace multiple consecutive underscores with single underscore
+    sanitized = re.sub(r'_+', '_', sanitized)
+    
+    # Limit length to prevent filesystem issues (max 255 characters)
+    if len(sanitized) > 255:
+        sanitized = sanitized[:255]
+    
+    # Ensure the name is not empty
+    if not sanitized:
+        sanitized = "unnamed_product"
+    
+    return sanitized
 
 # https://www.ors.com.tr/en/tek-sirali-sabit-bilyali-rulmanlar
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
         product_url: str, 
-        output_folder="downloads", 
+        product_name: str,
+        output_folder: str, 
         session_id="pdf_download_session", 
         regex_strategy: RegexExtractionStrategy = None 
         ):
     
     """
     Opens the given product page, searches for any PDF links, and downloads them.
+    Prevents downloading duplicate PDFs by checking existing files.
     """
 
-    print((f"\n---------------------------------------------------------------Entering product -------------------------------------------------------------------\n"))
+    # Global set to track downloaded PDFs across all products
+    if not hasattr(download_pdf_links, 'downloaded_pdfs'):
+        download_pdf_links.downloaded_pdfs = set()
 
     try:
 
@@ -64,28 +117,69 @@ async def download_pdf_links(
 
         # Extract all <a> href links
         pdf_links = []
+        seen_pdf_urls_in_page = set()  # Track PDF URLs found on this specific page
 
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if href.lower().endswith(".pdf"):
                 full_url = urljoin(product_url, href)
-                pdf_links.append(full_url)
-                print((f"\n---------------------------------------------------------------Found PDF link -------------------------------------------------------------------\n"))
+                # Check for duplicates within this page
+                if full_url not in seen_pdf_urls_in_page:
+                    pdf_links.append(full_url)
+                    seen_pdf_urls_in_page.add(full_url)
+                else:
+                    print(f"⏭️ Skipping duplicate PDF URL found on same page: {os.path.basename(urlparse(full_url).path)}")
 
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
 
-        # Download each PDF
+        productPath = output_folder + f'/{sanitize_folder_name(product_name)}' 
+        if not os.path.exists(productPath):
+            os.makedirs(productPath)
+
+        # Download each PDF with duplicate checking
         async with aiohttp.ClientSession() as session:
             for pdf_url in pdf_links:
                 filename = os.path.basename(urlparse(pdf_url).path)
-                save_path = os.path.join(output_folder, filename)
-
+                save_path = os.path.join(productPath, filename)
+                
+                # Check if this exact PDF URL has been downloaded before (global tracking)
+                if pdf_url in download_pdf_links.downloaded_pdfs:
+                    print(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {filename}")
+                    continue
+                
+                # # Check if file already exists in the product folder
+                # if os.path.exists(save_path):
+                #     print(f"⏭️ File already exists: {save_path}")
+                #     download_pdf_links.downloaded_pdfs.add(pdf_url)
+                #     continue
+                
                 try:
                     async with session.get(pdf_url) as resp:
                         if resp.status == 200:
+                            # Read the content to check for duplicates
+                            content = await resp.read()
+                            
+                            # Check if content is identical to any existing PDF
+                            content_hash = hashlib.md5(content).hexdigest()
+                            if hasattr(download_pdf_links, 'content_hashes') and content_hash in download_pdf_links.content_hashes:
+                                print(f"⏭️ Skipping duplicate content: {filename}")
+                                download_pdf_links.downloaded_pdfs.add(pdf_url)
+                                continue
+                            
+                            # Store content hash and download the file
+                            if not hasattr(download_pdf_links, 'content_hashes'):
+                                download_pdf_links.content_hashes = set()
+                            download_pdf_links.content_hashes.add(content_hash)
+                            
                             async with aiofiles.open(save_path, "wb") as f:
-                                await f.write(await resp.read())
+                                await f.write(content)
+                            
+                            # Mark this URL as downloaded
+                            download_pdf_links.downloaded_pdfs.add(pdf_url)
+                            
+                            # here should we put the script of the cleaning the pdf ? 
+                            pdf_processing(search_text=product_name.lower(), file_path=save_path)
                             print(f"📄 Downloaded PDF: {save_path}")
                         else:
                             print(f"❌ Failed to download: {pdf_url}")
@@ -153,17 +247,21 @@ def get_llm_strategy() -> LLMExtractionStrategy:
         schema=Venue.model_json_schema(),  # JSON schema of the data model
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
-            
-            "You are tasked with extracting structured product information from this webpage. "
-            "Your goal is to identify all products displayed in the main content or product grid. "
-            "For each product, extract only the following fields:\n\n"
-            "- productName: the full name or title of the product as shown to the user.\n"
-            "- productLink: the full clickable URL or anchor link pointing to the product's detail page.\n\n"
-            "Ignore navigation menus, footers, or sidebars. Focus only on real product listings. "
-            "Do not guess missing data. Only include items that contain both the name and link.\n\n"
+            "Extract ALL products from this webpage. Focus on product grids, cards, and catalog items.\n\n"
+            "EXTRACT:\n"
+            "- productName: Complete product name/title\n"
+            "- productLink: Full URL to product detail page\n\n"
+            "IGNORE: Navigation menus, footers, sidebars, banners, ads, pagination\n\n"
+            "RULES:\n"
+            "- Only include products from the same category with both name and link\n"
+            "- Use exact names as displayed\n"
+            "- Convert relative URLs to absolute\n"
+            "- No guessing missing data\n"
+            "- Include each product only once\n\n"
+            "Look for: Product cards, clickable product names, table listings, catalog items"
             "Output a list of dictionaries following the required schema."
 
-        ),  # Instructions for the LLM
+        ),
         input_format="markdown",  # Format of the input content
         verbose=True,  # Enable verbose logging
     )

@@ -1,3 +1,27 @@
+# Core web crawling and AI dependencies
 Crawl4AI==0.6.3
 python-dotenv==1.0.1
 pydantic==2.10.6
+
+# HTTP and networking
+aiohttp==3.9.1
+aiofiles==23.2.1
+
+# Web scraping and parsing
+beautifulsoup4==4.12.2
+fake-useragent==1.4.0
+
+# PDF processing and image manipulation
+opencv-python==4.8.1.78
+Pillow==10.1.0
+pytesseract==0.3.10
+pyzbar==0.1.9
+pdf2image==1.16.3
+
+# Data processing and analysis
+pandas==2.1.4
+numpy==1.25.2
+
+# Additional utilities
+requests==2.31.0
+urllib3==2.1.0

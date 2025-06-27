@@ -154,10 +154,10 @@ async def download_pdf_links(
                 filename = os.path.basename(urlparse(pdf_url).path)
                 save_path = os.path.join(productPath, filename)
                 
-                # Check if this exact PDF URL has been downloaded before (global tracking)
-                if pdf_url in download_pdf_links.downloaded_pdfs:
-                    print(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {filename}")
-                    continue
+                # # Check if this exact PDF URL has been downloaded before (global tracking)
+                # if pdf_url in download_pdf_links.downloaded_pdfs:
+                #     print(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {filename}")
+                #     continue
                 
                 # # Check if file already exists in the product folder
                 # if os.path.exists(save_path):
@@ -173,10 +173,10 @@ async def download_pdf_links(
                             
                             # Check if content is identical to any existing PDF
                             content_hash = hashlib.md5(content).hexdigest()
-                            if hasattr(download_pdf_links, 'content_hashes') and content_hash in download_pdf_links.content_hashes:
-                                print(f"⏭️ Skipping duplicate content: {filename}")
-                                download_pdf_links.downloaded_pdfs.add(pdf_url)
-                                continue
+                            # if hasattr(download_pdf_links, 'content_hashes') and content_hash in download_pdf_links.content_hashes:
+                            #     print(f"⏭️ Skipping duplicate content: {filename}")
+                            #     download_pdf_links.downloaded_pdfs.add(pdf_url)
+                            #     continue
                             
                             # Store content hash and download the file
                             if not hasattr(download_pdf_links, 'content_hashes'):
@@ -582,7 +582,8 @@ async def fetch_and_process_page(
         config=CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,  # Do not use cached data
             extraction_strategy=llm_strategy,  # Strategy for data extraction
-            css_selector= "div",  # Target specific content on the page 
+            css_selector = "div",  # Target specific content on the page
+            excluded_tags = ['script', 'style', 'head', 'footer', 'header', 'aside'],  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
             session_id=session_id,  # Unique session ID for the crawl
         ),
     )
@@ -593,6 +594,7 @@ async def fetch_and_process_page(
 
     # Parse extracted content
     extracted_data = json.loads(result.extracted_content)
+    print(type(extracted_data))
     if not extracted_data:
         print(f"No products found on page {page_number}.")
         return [], False
@@ -630,4 +632,5 @@ async def fetch_and_process_page(
         return [], False
 
     print(f"Extracted {len(complete_venues)} venues from page {page_number}.")
+    print(complete_venues)
     return complete_venues, False  # Continue crawling

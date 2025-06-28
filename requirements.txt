@@ -2,6 +2,7 @@
 Crawl4AI==0.6.3
 python-dotenv==1.0.1
 pydantic==2.10.6
+groq>=0.4.0,<0.5.0
 
 # HTTP and networking
 aiohttp==3.9.1

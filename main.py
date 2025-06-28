@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 
 from utils.scraper_utils import download_pdf_links
 from config import REQUIRED_KEYS
-from utils.data_utils import save_venues_to_csv
 from utils.scraper_utils import (
     fetch_and_process_page,
     get_browser_config,
@@ -20,7 +19,7 @@ from utils.scraper_utils import (
 load_dotenv()
 
 
-async def crawl_from_csv(input_file: str, output_file: str):
+async def crawl_from_csv(input_file: str):
     """
     Crawl venue data from a list of category/product links stored in a CSV.
     """
@@ -82,13 +81,11 @@ async def crawl_from_csv(input_file: str, output_file: str):
                 await asyncio.sleep(random.uniform(3, 7))  # Be polite
             
     # Save all collected venues
-    save_venues_to_csv(all_venues, output_file)
-    print(f"\n✅ Done. Saved {len(all_venues)} products to '{output_file}'.")
     llm_strategy.show_usage()
 
 
 async def main():
-    await crawl_from_csv("D:/projects/deepseek-ai-web-crawler/stMotor.tsv", "output.csv")
+    await crawl_from_csv("D:/projects/deepseek-ai-web-crawler/stMotor.tsv")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ from crawl4ai import (
     RegexExtractionStrategy,
 )
 
+import groq
 
 from models.venue import Venue
 from utils.data_utils import is_complete_venue, is_duplicate_venue
@@ -92,6 +93,7 @@ async def download_pdf_links(
     """
     Opens the given product page, searches for any PDF links, and downloads them.
     Prevents downloading duplicate PDFs by checking existing files.
+    Only creates a product folder if PDFs are actually found.
     """
 
     # Global set to track downloaded PDFs across all products
@@ -134,6 +136,14 @@ async def download_pdf_links(
                     seen_pdf_urls_in_page.add(full_url)
                 else:
                     print(f"⏭️ Skipping duplicate PDF URL found on same page: {os.path.basename(urlparse(full_url).path)}")
+
+        # Check if any PDFs were found
+        if not pdf_links:
+            print(f"📭 No PDFs found on page for product: {product_name}")
+            print(f"🔗 Product URL: {product_url}")
+            return  # Exit early without creating any folders
+
+        print(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}")
 
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
@@ -582,7 +592,7 @@ async def fetch_and_process_page(
         config=CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,  # Do not use cached data
             extraction_strategy=llm_strategy,  # Strategy for data extraction
-            css_selector = "div",  # Target specific content on the page
+            target_elements = ["div"],  # Target specific content on the page
             excluded_tags = ['script', 'style', 'head', 'footer', 'header', 'aside'],  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
             session_id=session_id,  # Unique session ID for the crawl
         ),
@@ -598,9 +608,6 @@ async def fetch_and_process_page(
     if not extracted_data:
         print(f"No products found on page {page_number}.")
         return [], False
-
-    # After parsing extracted content
-    print("Extracted data:", extracted_data)
 
     # Process product
     complete_venues = []
@@ -632,5 +639,140 @@ async def fetch_and_process_page(
         return [], False
 
     print(f"Extracted {len(complete_venues)} venues from page {page_number}.")
-    print(complete_venues)
+
+    ### APPLYING LLM BASED FILTER TO FILTER THE VENUES FROM THE NOISES ###
+    print(f"🔍 Applying LLM filter to {len(complete_venues)} extracted items...")
+    
+    # Apply LLM filtering to remove non-product items
+    filtered_venues = await filter_products_with_llm(
+        crawler=crawler,
+        complete_venues=complete_venues,
+        current_url=url,
+        session_id=f"{session_id}_filter"
+    )
+    
+    # Update the complete_venues list with filtered results
+    complete_venues = filtered_venues
+    
+    print(f"✅ After LLM filtering: {len(complete_venues)} real products remaining")
+    
+    if not complete_venues:
+        print(f"No real products found on page {page_number} after filtering.")
+        return [], False
+
     return complete_venues, False  # Continue crawling
+
+async def filter_products_with_llm(
+    crawler: AsyncWebCrawler,
+    complete_venues: List[dict],
+    current_url: str,
+    session_id: str = "product_filter_session"
+) -> List[dict]:
+    """
+    Uses LLM to filter the complete_venues list and remove non-product items.
+    
+    Args:
+        crawler (AsyncWebCrawler): The web crawler instance
+        complete_venues (List[dict]): List of extracted items (products and non-products)
+        current_url (str): The current page URL for context
+        session_id (str): Session identifier for the crawler
+        
+    Returns:
+        List[dict]: Filtered list containing only real products
+    """
+    
+    if not complete_venues:
+        print("No venues to filter.")
+        return []
+    
+    try:
+        print(f"🔍 Filtering {len(complete_venues)} items using LLM...")
+        
+        # Initialize Groq client with error handling
+        try:
+            # Try different initialization methods
+            try:
+                client = groq.Groq(
+                    api_key="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"
+                )
+            except TypeError:
+                # Try alternative initialization if the first fails
+                client = groq.Groq()
+                client.api_key = "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"
+            
+            print("✅ Groq client initialized successfully")
+        except Exception as groq_error:
+            print(f"❌ Failed to initialize Groq client: {groq_error}")
+            print(f"Groq error type: {type(groq_error)}")
+            print("Returning original list without filtering.")
+            return complete_venues
+        
+        # Prepare the prompt
+        prompt = f"""
+You are given a JSON array that contains a mix of entries. Each entry includes a productName and a productLink. 
+Your task is to carefully analyze each item and return only the entries that represent actual physical products, such as specific devices or models.
+Include only entries that clearly refer to individual products (e.g., hardware items, identifiable models or SKUs).
+Exclude general categories, software, industry solutions, accessories, customer stories, or applications.
+Keep the original format of the JSON (same key names and structure).
+Output only the filtered list of actual products.
+Use clues like the URL structure, and naming patterns (e.g., specific product names vs. general terms).
+Return ONLY the JSON array:
+
+{json.dumps(complete_venues, indent=2)}
+"""
+        
+        # Call the LLM
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            model="deepseek-r1-distill-llama-70b",
+            temperature=0.1,
+            max_tokens=4000
+        )
+        
+        # Extract the response
+        llm_response = chat_completion.choices[0].message.content
+        
+        # Parse the LLM response
+        try:
+            # Try to extract JSON from the response
+            import re
+            json_match = re.search(r'\[.*\]', llm_response, re.DOTALL)
+            if json_match:
+                filtered_results = json.loads(json_match.group())
+            else:
+                # If no JSON array found, try to parse the entire response
+                filtered_results = json.loads(llm_response)
+            
+            # Extract only the real products
+            real_products = []
+            for item in filtered_results:
+                if item.get("isRealProduct", True):
+                    # Remove the filtering metadata and keep only product data
+                    product_data = {
+                        "productName": item["productName"],
+                        "productLink": item["productLink"]
+                    }
+                    real_products.append(product_data)
+                else:
+                    print(f"❌ Filtered out: '{item['productName']}' - {item.get('reason', 'No reason provided')}")
+            
+            print(f"✅ LLM filtering complete: {len(real_products)}/{len(complete_venues)} items kept as real products")
+            return real_products
+            
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Failed to parse LLM response: {e}")
+            print(f"LLM Response length: {len(llm_response)}")
+            print(f"LLM Response preview: {llm_response[:200]}...")
+            print(f"LLM Response end: ...{llm_response[-200:]}")
+            print("Returning original list without filtering.")
+            return complete_venues
+            
+    except Exception as e:
+        print(f"⚠️ Error during LLM filtering: {e}")
+        print("Returning original list without filtering.")
+        return complete_venues

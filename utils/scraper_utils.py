@@ -32,8 +32,6 @@ from crawl4ai import (
     RegexExtractionStrategy,
 )
 
-import groq
-
 from models.venue import Venue
 from utils.data_utils import is_complete_venue, is_duplicate_venue
 
@@ -200,7 +198,7 @@ async def download_pdf_links(
                             download_pdf_links.downloaded_pdfs.add(pdf_url)
                             
                             # here should we put the script of the cleaning the pdf ? 
-                            pdf_processing(search_text=product_name.lower(), file_path=save_path)
+                            # pdf_processing(search_text=product_name.lower(), file_path=save_path)
                             print(f"📄 Downloaded PDF: {save_path}")
                         else:
                             print(f"❌ Failed to download: {pdf_url}")
@@ -238,7 +236,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
     
     # Remove any existing pagination parameters
     pagination_params_to_remove = [
-        'page', 'p', 'pg', 'page_num', 'page_number',
+        'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
         'offset', 'start', 'skip', 'from',
         'limit', 'size', 'per_page', 'items_per_page',
         'cursor', 'after', 'before', 'next', 'prev',
@@ -254,7 +252,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
     
     # Calculate pagination values based on type
     if pagination_type == "page":
-        query_params['page'] = [str(page_number)]
+        query_params['p'] = [str(page_number)]
     elif pagination_type == "offset":
         query_params['offset'] = [str((page_number - 1) * 20)]  # Assuming 20 items per page
     elif pagination_type == "start":
@@ -292,14 +290,12 @@ def _detect_pagination_type(url: str) -> str:
         
     Returns:
         str: Detected pagination type
-    """
-    from urllib.parse import urlparse, parse_qs
-    
+    """    
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
     
     # Check for existing pagination parameters
-    if any(param in query_params for param in ['page', 'p', 'pg', 'page_num']):
+    if any(param in query_params for param in ['page', 'p', 'pg', 'page_num', 'pageNumber']):
         return "page"
     elif any(param in query_params for param in ['offset', 'start', 'skip']):
         return "offset"
@@ -325,124 +321,6 @@ def _detect_pagination_type(url: str) -> str:
     # Default to page-based pagination
     return "page"
 
-
-def create_pagination_url(base_url: str, page_number: int, items_per_page: int = 20, 
-                         pagination_type: str = "auto", custom_params: dict = None) -> str:
-    """
-    Advanced pagination URL creator with support for custom parameters and items per page.
-    
-    Args:
-        base_url (str): The base URL
-        page_number (int): The page number (1-based)
-        items_per_page (int): Number of items per page
-        pagination_type (str): Type of pagination to use
-        custom_params (dict): Additional custom parameters to include
-        
-    Returns:
-        str: Complete pagination URL
-    """
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-    
-    # Parse the URL
-    parsed = urlparse(base_url)
-    query_params = parse_qs(parsed.query)
-    
-    # Add custom parameters if provided
-    if custom_params:
-        for key, value in custom_params.items():
-            query_params[key] = [str(value)]
-    
-    # Calculate offset for offset-based pagination
-    offset = (page_number - 1) * items_per_page
-    
-    # Remove existing pagination parameters
-    pagination_params_to_remove = [
-        'page', 'p', 'pg', 'page_num', 'page_number',
-        'offset', 'start', 'skip', 'from',
-        'limit', 'size', 'per_page', 'items_per_page',
-        'cursor', 'after', 'before', 'next', 'prev'
-    ]
-    
-    for param in pagination_params_to_remove:
-        query_params.pop(param, None)
-    
-    # Apply pagination based on type
-    if pagination_type == "auto":
-        pagination_type = _detect_pagination_type(base_url)
-    
-    if pagination_type == "page":
-        query_params['page'] = [str(page_number)]
-    elif pagination_type == "offset":
-        query_params['offset'] = [str(offset)]
-    elif pagination_type == "start":
-        query_params['start'] = [str(offset)]
-    elif pagination_type == "skip":
-        query_params['skip'] = [str(offset)]
-    elif pagination_type == "limit_offset":
-        query_params['limit'] = [str(items_per_page)]
-        query_params['offset'] = [str(offset)]
-    elif pagination_type == "size_offset":
-        query_params['size'] = [str(items_per_page)]
-        query_params['offset'] = [str(offset)]
-    elif pagination_type == "per_page":
-        query_params['per_page'] = [str(items_per_page)]
-        query_params['page'] = [str(page_number)]
-    elif pagination_type == "items_per_page":
-        query_params['items_per_page'] = [str(items_per_page)]
-        query_params['page'] = [str(page_number)]
-    else:
-        # Default to page-based
-        query_params['page'] = [str(page_number)]
-    
-    # Reconstruct URL
-    new_query = urlencode(query_params, doseq=True)
-    new_parsed = parsed._replace(query=new_query)
-    
-    return urlunparse(new_parsed)
-
-
-def get_pagination_info(url: str) -> dict:
-    """
-    Extract pagination information from a URL.
-    
-    Args:
-        url (str): The URL to analyze
-        
-    Returns:
-        dict: Dictionary containing pagination information
-    """
-    from urllib.parse import urlparse, parse_qs
-    
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-    
-    info = {
-        'current_page': 1,
-        'items_per_page': 20,
-        'offset': 0,
-        'pagination_type': 'unknown',
-        'has_pagination': False
-    }
-    
-    # Detect pagination type and extract values
-    if 'page' in query_params:
-        info['pagination_type'] = 'page'
-        info['current_page'] = int(query_params['page'][0])
-        info['has_pagination'] = True
-    elif 'offset' in query_params:
-        info['pagination_type'] = 'offset'
-        info['offset'] = int(query_params['offset'][0])
-        info['current_page'] = (info['offset'] // info['items_per_page']) + 1
-        info['has_pagination'] = True
-    elif 'limit' in query_params and 'offset' in query_params:
-        info['pagination_type'] = 'limit_offset'
-        info['items_per_page'] = int(query_params['limit'][0])
-        info['offset'] = int(query_params['offset'][0])
-        info['current_page'] = (info['offset'] // info['items_per_page']) + 1
-        info['has_pagination'] = True
-    
-    return info
-
 def get_browser_config() -> BrowserConfig:
     """
     Returns the browser configuration for the crawler.
@@ -457,8 +335,10 @@ def get_browser_config() -> BrowserConfig:
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
         headless=False,  # Whether to run in headless mode (no GUI)
+        viewport_width = 1080,  # Width of the browser viewport
+        viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
-        headers={"User-Agent": user_agent},  # Custom headers to include
+        user_agent = user_agent,  # Custom headers to include
     )
 
 
@@ -488,33 +368,39 @@ def get_llm_strategy() -> LLMExtractionStrategy:
     return LLMExtractionStrategy(
         llm_config=LLMConfig(
             provider = "groq/deepseek-r1-distill-llama-70b", # LLM model to use
-            api_token= "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",  # API token for the LLM provider        
-                             ),
+            api_token= "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",  # API token for the LLM provider    
+            # api_token = "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" # openai API key     
+        ),
         schema=Venue.model_json_schema(),  # JSON schema of the data model
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
-            "Extract ALL products from this webpage. Focus on product grids, cards, and catalog items.\n\n"
-            "EXTRACT:\n"
-            "- productName: Complete product name/title\n"
-            "- productLink: Full URL to product detail page\n\n"
-            "IGNORE: Navigation menus, footers, sidebars, banners, ads, pagination\n\n"
-            "RULES:\n"
-            "- Only include products from the same category with both name and link\n"
-            "- Use exact names as displayed\n"
-            "- Convert relative URLs to absolute\n"
-            "- No guessing missing data\n"
-            "- Include each product only once\n\n"
-            "Look for: Product cards, clickable product names, table listings, catalog items"
-            "Output a list of dictionaries following the required schema."
+            "You are given HTML content that has already been filtered to include only the main product listing elements from an industrial or e-commerce website. This content was selected using a CSS selector, so it should primarily contain product cards, tiles, or grid items.\n"
+            "\n"
+            "Your task is to extract all valid product entries from this filtered HTML. For each product, extract the following fields:\n"
+            "- productName: The complete product name or title, exactly as displayed on the website.\n"
+            "- productLink: The full, absolute URL to the product detail page, taken from the href attribute of an anchor tag within the product element.\n"
+            "\n"
+            "Extraction Rules:\n"
+            "- Only include entries that have both a productName and a productLink.\n"
+            "- Use the exact product name as shown in the HTML—do not paraphrase or guess.\n"
+            "- For productLink, always use the value from the href attribute and convert relative URLs to absolute URLs using the website domain.\n"
+            "- Do not include categories, collections, or non-product items.\n"
+            "- Do not guess or invent missing data; only extract what is present in the HTML.\n"
+            "- Output a list of dictionaries, each matching the required schema.\n"
+            "- If the url is incomplete, complete the url with the domain"
+            "Context:\n"
+            "The HTML you receive is already focused on product elements, so you do not need to search the entire page—just extract structured product data from the provided content.\n"
+            "Output a list of dictionaries, each matching the required schema.\n"
 
         ),
         input_format="markdown",  # Format of the input content
-        verbose=True,  # Enable verbose logging
+        verbose=False,  # Enable verbose logging
     )
 
 
 async def check_no_results(
     crawler: AsyncWebCrawler,
+    css_selector: str,
     url: str,
     session_id: str,
 ) -> bool:
@@ -534,6 +420,7 @@ async def check_no_results(
         url=url,
         config=CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
+            target_elements = css_selector,
             session_id=session_id,
         ),
     )
@@ -551,6 +438,7 @@ async def check_no_results(
 
 async def fetch_and_process_page(
     crawler: AsyncWebCrawler,
+    css_selector: str,
     page_number: int,
     url: str,
     llm_strategy: LLMExtractionStrategy,
@@ -576,14 +464,84 @@ async def fetch_and_process_page(
             - bool: A flag indicating if the "No Results Found" message was encountered.
     """
     
+    button_selector = ".load-more-button"  # CSS selector for the "Load More" button
+
+    js_commands = f"""
+        console.log('[JS] Starting data extraction...');
+        let allRowsData = [];
+        const rowSelectors = '{", ".join(css_selector)}';
+        const buttonSelector = '{button_selector}';
+        const maxPages = 3;
+        let currentPage = 1;
+
+        // Helper function to extract rows
+        function extractRows() {{
+            const pageData = [];
+            const rows = document.querySelectorAll(rowSelectors);
+            rows.forEach(row => {{
+                pageData.push({{
+                    html: row.outerHTML
+                }});
+            }});
+            return pageData;
+        }}
+
+        // Always extract first page
+        allRowsData.push({{
+            page: currentPage,
+            data: extractRows()
+        }});
+        console.log(`[JS] Extracted initial page with ${{allRowsData[0].data.length}} rows`);
+
+        // Only attempt pagination if valid button selector exists
+        if (buttonSelector && buttonSelector.trim() !== '') {{
+            console.log('[JS] Pagination detected. Starting automatic pagination...');
+            let nextButton = document.querySelector(buttonSelector);
+            
+            while (currentPage < maxPages && nextButton && nextButton.offsetParent !== null && !nextButton.disabled) {{
+                // Click to load next page
+                nextButton.click();
+                console.log(`[JS] Clicked page ${{currentPage}}`);
+                currentPage++;
+                
+                // Wait for new content to load
+                await new Promise(r => setTimeout(r, 3000));
+                
+                // Extract new page data
+                const newPageData = extractRows();
+                allRowsData.push({{
+                    page: currentPage,
+                    data: newPageData
+                }});
+                console.log(`[JS] Extracted page ${{currentPage}} with ${{newPageData.length}} rows`);
+                
+                // Update button reference after DOM changes
+                nextButton = document.querySelector(buttonSelector);
+            }}
+            console.log('[JS] Pagination complete');
+        }} else {{
+            console.log('[JS] No pagination button selector provided. Returning single page data.');
+        }}
+
+        return allRowsData;
+    """
+
+
+
     # Debugging: Print the URL being fetched
     print(f"Fetching page {page_number} from URL: {url}")    
 
 
     # Check if "No Results Found" message is present
-    no_results = await check_no_results(crawler, url, session_id)
+    no_results = await check_no_results(
+        crawler,
+        css_selector,
+        url,
+        session_id
+    )
 
     if no_results:
+        print(f"------------------------------------------------------------------------- 🏁 No results found on page {page_number}. Stopping pagination. from the first run !! -------------------------------------------------------------------------"    )
         return [], True  # No more results, signal to stop crawling
 
     # Fetch page content with the extraction strategy
@@ -592,11 +550,39 @@ async def fetch_and_process_page(
         config=CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,  # Do not use cached data
             extraction_strategy=llm_strategy,  # Strategy for data extraction
-            target_elements = ["div"],  # Target specific content on the page
-            excluded_tags = ['script', 'style', 'head', 'footer', 'header', 'aside'],  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
+            target_elements = css_selector,  # Target specific content on the page
+            # excluded_tags = ['script', 'style', 'head', 'footer', 'header', 'aside'],  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
             session_id=session_id,  # Unique session ID for the crawl
+            # js_code=js_commands,  # JavaScript to handle pagination
+            simulate_user= True, 
+            verbose=True,  # Enable verbose logging
         ),
     )
+
+    print(Venue.model_json_schema())
+
+    resultfile = "result.txt"
+    with open(resultfile, 'w', encoding='utf-8') as file: 
+        file.write(str(result))
+    print(f"result value saved into {resultfile}")
+
+    htmlstring = result.html
+    filename = "html_file.html"
+    with open(filename, "w",  encoding='utf-8') as file:
+        file.write(htmlstring)
+    print(f"result.html saved to {filename}")
+
+    htmlstring = result.cleaned_html
+    filename = "cleaned_html_file.html"
+    with open(filename, "w",  encoding='utf-8') as file:
+        file.write(htmlstring)
+    print(f"result.html saved to {filename}")
+
+    htmlstring = result.fit_html
+    filename = 'fit_html.html'
+    with open(filename, 'w', encoding='utf-8') as file: 
+        file.write(htmlstring)
+
 
     if not (result.success and result.extracted_content):
         print(f"Error fetching page {page_number}: {result.error_message}")
@@ -640,139 +626,139 @@ async def fetch_and_process_page(
 
     print(f"Extracted {len(complete_venues)} venues from page {page_number}.")
 
-    ### APPLYING LLM BASED FILTER TO FILTER THE VENUES FROM THE NOISES ###
-    print(f"🔍 Applying LLM filter to {len(complete_venues)} extracted items...")
+    # ### APPLYING LLM BASED FILTER TO FILTER THE VENUES FROM THE NOISES ###
+    # print(f"🔍 Applying LLM filter to {len(complete_venues)} extracted items...")
     
-    # Apply LLM filtering to remove non-product items
-    filtered_venues = await filter_products_with_llm(
-        crawler=crawler,
-        complete_venues=complete_venues,
-        current_url=url,
-        session_id=f"{session_id}_filter"
-    )
+    # # Apply LLM filtering to remove non-product items
+    # filtered_venues = await filter_products_with_llm(
+    #     crawler=crawler,
+    #     complete_venues=complete_venues,
+    #     current_url=url,
+    #     session_id=f"{session_id}_filter"
+    # )
     
-    # Update the complete_venues list with filtered results
-    complete_venues = filtered_venues
+    # # Update the complete_venues list with filtered results
+    # complete_venues = filtered_venues
     
-    print(f"✅ After LLM filtering: {len(complete_venues)} real products remaining")
+    # print(f"✅ After LLM filtering: {len(complete_venues)} real products remaining")
     
-    if not complete_venues:
-        print(f"No real products found on page {page_number} after filtering.")
-        return [], False
+    # if not complete_venues:
+    #     print(f"No real products found on page {page_number} after filtering.")
+    #     return [], False
 
     return complete_venues, False  # Continue crawling
 
-async def filter_products_with_llm(
-    crawler: AsyncWebCrawler,
-    complete_venues: List[dict],
-    current_url: str,
-    session_id: str = "product_filter_session"
-) -> List[dict]:
-    """
-    Uses LLM to filter the complete_venues list and remove non-product items.
+# async def filter_products_with_llm(
+#     crawler: AsyncWebCrawler,
+#     complete_venues: List[dict],
+#     current_url: str,
+#     session_id: str = "product_filter_session"
+# ) -> List[dict]:
+#     """
+#     Uses LLM to filter the complete_venues list and remove non-product items.
     
-    Args:
-        crawler (AsyncWebCrawler): The web crawler instance
-        complete_venues (List[dict]): List of extracted items (products and non-products)
-        current_url (str): The current page URL for context
-        session_id (str): Session identifier for the crawler
+#     Args:
+#         crawler (AsyncWebCrawler): The web crawler instance
+#         complete_venues (List[dict]): List of extracted items (products and non-products)
+#         current_url (str): The current page URL for context
+#         session_id (str): Session identifier for the crawler
         
-    Returns:
-        List[dict]: Filtered list containing only real products
-    """
+#     Returns:
+#         List[dict]: Filtered list containing only real products
+#     """
     
-    if not complete_venues:
-        print("No venues to filter.")
-        return []
+#     if not complete_venues:
+#         print("No venues to filter.")
+#         return []
     
-    try:
-        print(f"🔍 Filtering {len(complete_venues)} items using LLM...")
+#     try:
+#         print(f"🔍 Filtering {len(complete_venues)} items using LLM...")
         
-        # Initialize Groq client with error handling
-        try:
-            # Try different initialization methods
-            try:
-                client = groq.Groq(
-                    api_key="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"
-                )
-            except TypeError:
-                # Try alternative initialization if the first fails
-                client = groq.Groq()
-                client.api_key = "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"
+#         # Initialize Groq client with error handling
+#         try:
+#             # Try different initialization methods
+#             try:
+#                 client = groq.Groq(
+#                     api_key="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"
+#                 )
+#             except TypeError:
+#                 # Try alternative initialization if the first fails
+#                 client = groq.Groq()
+#                 client.api_key = "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"
             
-            print("✅ Groq client initialized successfully")
-        except Exception as groq_error:
-            print(f"❌ Failed to initialize Groq client: {groq_error}")
-            print(f"Groq error type: {type(groq_error)}")
-            print("Returning original list without filtering.")
-            return complete_venues
+#             print("✅ Groq client initialized successfully")
+#         except Exception as groq_error:
+#             print(f"❌ Failed to initialize Groq client: {groq_error}")
+#             print(f"Groq error type: {type(groq_error)}")
+#             print("Returning original list without filtering.")
+#             return complete_venues
         
-        # Prepare the prompt
-        prompt = f"""
-You are given a JSON array that contains a mix of entries. Each entry includes a productName and a productLink. 
-Your task is to carefully analyze each item and return only the entries that represent actual physical products, such as specific devices or models.
-Include only entries that clearly refer to individual products (e.g., hardware items, identifiable models or SKUs).
-Exclude general categories, software, industry solutions, accessories, customer stories, or applications.
-Keep the original format of the JSON (same key names and structure).
-Output only the filtered list of actual products.
-Use clues like the URL structure, and naming patterns (e.g., specific product names vs. general terms).
-Return ONLY the JSON array:
+#         # Prepare the prompt
+#         prompt = f"""
+# You are given a JSON array that contains a mix of entries. Each entry includes a productName and a productLink. 
+# Your task is to carefully analyze each item and return only the entries that represent actual physical products, such as specific devices or models.
+# Include only entries that clearly refer to individual products (e.g., hardware items, identifiable models or SKUs).
+# Exclude general categories, software, industry solutions, accessories, customer stories, or applications.
+# Keep the original format of the JSON (same key names and structure).
+# Output only the filtered list of actual products.
+# Use clues like the URL structure, and naming patterns (e.g., specific product names vs. general terms).
+# Return ONLY the JSON array:
 
-{json.dumps(complete_venues, indent=2)}
-"""
+# {json.dumps(complete_venues, indent=2)}
+# """
         
-        # Call the LLM
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model="deepseek-r1-distill-llama-70b",
-            temperature=0.1,
-            max_tokens=4000
-        )
+#         # Call the LLM
+#         chat_completion = client.chat.completions.create(
+#             messages=[
+#                 {
+#                     "role": "user",
+#                     "content": prompt
+#                 }
+#             ],
+#             model="deepseek-r1-distill-llama-70b",
+#             temperature=0.1,
+#             max_tokens=4000
+#         )
         
-        # Extract the response
-        llm_response = chat_completion.choices[0].message.content
+#         # Extract the response
+#         llm_response = chat_completion.choices[0].message.content
         
-        # Parse the LLM response
-        try:
-            # Try to extract JSON from the response
-            import re
-            json_match = re.search(r'\[.*\]', llm_response, re.DOTALL)
-            if json_match:
-                filtered_results = json.loads(json_match.group())
-            else:
-                # If no JSON array found, try to parse the entire response
-                filtered_results = json.loads(llm_response)
+#         # Parse the LLM response
+#         try:
+#             # Try to extract JSON from the response
+#             import re
+#             json_match = re.search(r'\[.*\]', llm_response, re.DOTALL)
+#             if json_match:
+#                 filtered_results = json.loads(json_match.group())
+#             else:
+#                 # If no JSON array found, try to parse the entire response
+#                 filtered_results = json.loads(llm_response)
             
-            # Extract only the real products
-            real_products = []
-            for item in filtered_results:
-                if item.get("isRealProduct", True):
-                    # Remove the filtering metadata and keep only product data
-                    product_data = {
-                        "productName": item["productName"],
-                        "productLink": item["productLink"]
-                    }
-                    real_products.append(product_data)
-                else:
-                    print(f"❌ Filtered out: '{item['productName']}' - {item.get('reason', 'No reason provided')}")
+#             # Extract only the real products
+#             real_products = []
+#             for item in filtered_results:
+#                 if item.get("isRealProduct", True):
+#                     # Remove the filtering metadata and keep only product data
+#                     product_data = {
+#                         "productName": item["productName"],
+#                         "productLink": item["productLink"]
+#                     }
+#                     real_products.append(product_data)
+#                 else:
+#                     print(f"❌ Filtered out: '{item['productName']}' - {item.get('reason', 'No reason provided')}")
             
-            print(f"✅ LLM filtering complete: {len(real_products)}/{len(complete_venues)} items kept as real products")
-            return real_products
+#             print(f"✅ LLM filtering complete: {len(real_products)}/{len(complete_venues)} items kept as real products")
+#             return real_products
             
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Failed to parse LLM response: {e}")
-            print(f"LLM Response length: {len(llm_response)}")
-            print(f"LLM Response preview: {llm_response[:200]}...")
-            print(f"LLM Response end: ...{llm_response[-200:]}")
-            print("Returning original list without filtering.")
-            return complete_venues
+#         except json.JSONDecodeError as e:
+#             print(f"⚠️ Failed to parse LLM response: {e}")
+#             print(f"LLM Response length: {len(llm_response)}")
+#             print(f"LLM Response preview: {llm_response[:200]}...")
+#             print(f"LLM Response end: ...{llm_response[-200:]}")
+#             print("Returning original list without filtering.")
+#             return complete_venues
             
-    except Exception as e:
-        print(f"⚠️ Error during LLM filtering: {e}")
-        print("Returning original list without filtering.")
-        return complete_venues
+#     except Exception as e:
+#         print(f"⚠️ Error during LLM filtering: {e}")
+#         print("Returning original list without filtering.")
+#         return complete_venues

@@ -27,6 +27,7 @@ async def crawl_from_csv(input_file: str):
     llm_strategy = get_llm_strategy()
     regex_strategy = get_regex_strategy()
     session_id = "bulk_crawl_session"
+    css_selector = ["td.product-name"]  # CSS selector to target specific content on the page
 
     all_venues = []
     seen_names = set()
@@ -45,21 +46,24 @@ async def crawl_from_csv(input_file: str):
         for index, link in enumerate(links):
             print(f"\n--- Crawling link {index+1}/{len(links)} ---\n{link}")
             
-            page_number = 0
+            page_number = 1
 
             while True:
                 paged_url = append_page_param(link, page_number)
                 print(f"🔄 Crawling URL: {paged_url}")
                 
+
                 venues, no_results = await fetch_and_process_page(
-                    crawler,
-                    page_number,
-                    paged_url,
-                    llm_strategy,
-                    session_id,
-                    REQUIRED_KEYS,
-                    seen_names,
+                    crawler = crawler,
+                    css_selector = css_selector,
+                    page_number = page_number ,
+                    url = paged_url,
+                    llm_strategy = llm_strategy,
+                    session_id = f"{session_id}_{page_number}",
+                    required_keys = REQUIRED_KEYS,
+                    seen_names = seen_names,
                 )
+
 
                 if no_results or not venues:
                     print(f"🏁 Stopping pagination - no more results on page {page_number}")
@@ -67,18 +71,20 @@ async def crawl_from_csv(input_file: str):
                 
 
                 for venue in venues:
+                    await asyncio.sleep(random.uniform(5, 15))
+                    session_id = f"{session_id}_{venue['productName']}"
                     await download_pdf_links(
                         crawler, 
                         product_url=venue["productLink"],
                         product_name=venue["productName"],
                         output_folder="pdfs",
-                        session_id="pdf_download_session",
+                        session_id=session_id,
                         regex_strategy=regex_strategy,
                     )
 
                 all_venues.extend(venues)
                 page_number += 1
-                await asyncio.sleep(random.uniform(3, 7))  # Be polite
+                await asyncio.sleep(random.uniform(3, 15))  # Be polite
             
     # Save all collected venues
     llm_strategy.show_usage()

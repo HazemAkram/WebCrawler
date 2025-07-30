@@ -1,52 +1,63 @@
 # DeepSeek AI Web Crawler
 
-A powerful, AI-powered web crawler that can extract product information from any e-commerce website and download associated PDF documents. Features enhanced pagination handling, intelligent duplicate detection, and sophisticated PDF processing.
+A powerful, AI-powered web crawler that extracts product information from e-commerce websites and downloads associated PDF documents. Features intelligent pagination handling, duplicate detection, and advanced PDF processing with QR code removal and text cleaning.
 
 ## 🚀 Features
 
-### **Enhanced Pagination System**
-- **Universal Compatibility**: Works with any website or API pagination pattern
-- **Automatic Detection**: Detects pagination type from URL patterns (page-based, offset-based, limit-offset, cursor-based)
-- **Intelligent Parameter Management**: Preserves existing URL parameters while managing pagination
-- **Smart End Detection**: Automatically stops when no more results are found
-
-### **AI-Powered Extraction**
+### **AI-Powered Product Extraction**
 - **LLM-Based Extraction**: Uses Groq/DeepSeek R1 Distill Llama 70B for intelligent data extraction
 - **Universal Compatibility**: Works with any website layout without custom configuration
 - **Schema Validation**: Ensures extracted data meets required format using Pydantic models
+- **Duplicate Prevention**: Prevents processing duplicate products using name-based detection
 
-### **Advanced PDF Processing**
-- **Automatic Download**: Downloads PDFs from product pages
+### **Advanced Pagination System**
+- **Multiple Pagination Types**: Supports page-based, offset-based, limit-offset, and cursor-based pagination
+- **Automatic Detection**: Detects pagination patterns from URL parameters
+- **JavaScript Pagination**: Handles dynamic pagination using button clicks and JavaScript execution
+- **Intelligent Parameter Management**: Preserves existing URL parameters while managing pagination
+
+### **Comprehensive PDF Processing**
+- **Automatic Download**: Downloads PDFs from product detail pages
 - **Duplicate Prevention**: Prevents downloading identical files using content hashing
-- **PDF Cleaning**: Removes QR codes and specific text with background color matching
-- **Cover Page Addition**: Automatically adds custom cover pages
+- **QR Code Removal**: Automatically detects and removes QR codes from PDFs
+- **Text Cleaning**: Removes specific text with background color matching
+- **Cover Page Addition**: Automatically adds custom cover pages to processed PDFs
+- **Smart Organization**: Organizes PDFs by product name in dedicated folders
 
 ### **Robust Error Handling**
 - **Graceful Degradation**: Continues crawling if individual pages fail
-- **Rate Limiting**: Respectful crawling with configurable delays
+- **Rate Limiting**: Respectful crawling with configurable delays (3-15 seconds)
 - **Session Management**: Efficient session handling for better performance
+- **SSL Handling**: Configurable SSL verification for various server configurations
 
 ## 📁 Project Structure
 
 ```
-.
+deepseek-ai-web-crawler/
 ├── main.py                    # Main entry point for the crawler
-├── config.py                  # Configuration constants
+├── config.py                  # Configuration constants (required keys)
 ├── cleaner.py                 # PDF processing and cleaning functionality
+├── sites.csv                  # Input file with URLs and selectors
+├── cover.png                  # Cover page template for PDFs
 ├── models/
 │   └── venue.py              # Defines the Venue data model using Pydantic
 ├── utils/
 │   ├── __init__.py           # Package marker for utils
-│   ├── data_utils.py         # Utility functions for processing and saving data
+│   ├── data_utils.py         # Utility functions for data validation
 │   └── scraper_utils.py      # Enhanced pagination and crawling utilities
+├── pdfs/                     # Output directory for downloaded PDFs
 ├── requirements.txt          # Python package dependencies
-├── .gitignore               # Git ignore file
-├── stMotor.tsv              # Input file with URLs to crawl
-├── output.csv               # Output file with extracted products
 └── README.MD                # This file
 ```
 
 ## 🛠️ Installation
+
+### **Prerequisites**
+- Python 3.8 or higher
+- Tesseract OCR (for PDF processing)
+- Poppler (for PDF to image conversion)
+
+### **Setup Steps**
 
 1. **Clone the repository**:
    ```bash
@@ -54,31 +65,53 @@ A powerful, AI-powered web crawler that can extract product information from any
    cd deepseek-ai-web-crawler
    ```
 
-2. **Install dependencies**:
+2. **Install Python dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Set up environment variables**:
+3. **Install system dependencies**:
+
+   **Windows:**
+   ```bash
+   # Install Tesseract OCR
+   # Download from: https://github.com/UB-Mannheim/tesseract/wiki
+   
+   # Install Poppler
+   # Download from: https://github.com/oschwartz10612/poppler-windows/releases
+   ```
+
+   **macOS:**
+   ```bash
+   brew install tesseract poppler
+   ```
+
+   **Linux (Ubuntu/Debian):**
+   ```bash
+   sudo apt-get install tesseract-ocr poppler-utils
+   ```
+
+4. **Set up environment variables**:
    Create a `.env` file with your API keys:
    ```
    GROQ_API_KEY=your_groq_api_key_here
    ```
 
-4. **Install additional dependencies for PDF processing** (if not already installed):
-   ```bash
-   pip install opencv-python pillow pytesseract pyzbar pdf2image pandas
+5. **Configure Tesseract path** (if needed):
+   Update the path in `cleaner.py` line 139:
+   ```python
+   pytesseract.pytesseract.tesseract_cmd = r"path/to/your/tesseract.exe"
    ```
 
 ## 🚀 Usage
 
 ### **Basic Usage**
 
-1. **Prepare your input file** (`stMotor.tsv`):
-   ```
-   https://example-store.com/products
-   https://another-shop.com/catalog
-   https://any-ecommerce-site.com/items
+1. **Prepare your input file** (`sites.csv`):
+   ```csv
+   url,css_selector,button_selector
+   "https://example-store.com/products","div.product-item","button.load-more"
+   "https://another-shop.com/catalog","li.product","a.next-page"
    ```
 
 2. **Run the crawler**:
@@ -87,92 +120,74 @@ A powerful, AI-powered web crawler that can extract product information from any
    ```
 
 The crawler will:
-- Read URLs from `stMotor.tsv`
+- Read URLs and selectors from `sites.csv`
 - Automatically detect pagination patterns for each site
-- Crawl all pages using enhanced pagination
+- Crawl all pages using enhanced pagination or JavaScript execution
 - Extract product information using AI
 - Download associated PDFs
-- Save results to `output.csv`
+- Process and clean PDFs (remove QR codes, add cover pages)
+- Save results to CSV files
 
 ### **Input File Format**
 
-The input file should be a TSV (Tab-Separated Values) file with one URL per line:
+The `sites.csv` file should contain:
+- **url**: The starting URL for the product catalog
+- **css_selector**: CSS selector(s) for product elements (comma-separated if multiple)
+- **button_selector**: CSS selector for pagination button (optional, for JS-based pagination)
 
+**Example:**
+```csv
+url,css_selector,button_selector
+"https://www.vag-group.com/en/products/product-groups/butterfly-valves/butterflyvalves","div.Products__Item",
+"https://omegamotor.com.tr/en/product/","div.product-card","button.load-more"
 ```
-https://omegamotor.com.tr/en/product/?rated_output=1,50;2,20;3,00;4,00;5,50;7,50;10,00;15,00;18,50;22,00;30,00;45,00;55,00&body_size=80;90;110;112;132;160;180;200;225&product_code=&rated_speed=&efficiency_class=IE3&body_material=Al&mountig=&min_rated_voltage=230;400&pol_number=2;4;6;8&service_factor=&view=1&page=0
-https://www.bibus.nl/en/cylinders
-https://shop.example.com/catalog
-```
 
-## 🔧 Enhanced Pagination System
+## 🔧 Configuration
 
-### **Supported Pagination Types**
-
-The crawler automatically detects and handles various pagination patterns:
-
-1. **Page-Based**: `?page=1`, `?p=2`, `?pg=3`
-2. **Offset-Based**: `?offset=20`, `?start=40`, `?skip=60`
-3. **Limit-Offset**: `?limit=20&offset=40`
-4. **Cursor-Based**: `?cursor=abc123`, `?after=xyz789`
-5. **Size-Based**: `?size=20&offset=40`
-6. **Per-Page**: `?per_page=25&page=2`
-
-### **Automatic Detection**
-
-The system automatically detects pagination patterns by:
-- Analyzing URL parameters
-- Checking domain-specific patterns (Shopify, WooCommerce, Magento, APIs)
-- Examining URL path patterns
-- Identifying existing pagination parameters
-
-### **Intelligent Parameter Management**
-
-The enhanced pagination system:
-- Preserves all existing URL parameters (filters, sorting, etc.)
-- Removes duplicate pagination parameters
-- Handles complex query strings with multiple parameters
-- Maintains URL integrity across pagination
-
-### **Real-World Examples**
-
-**E-commerce Sites:**
+### **Core Configuration** (`config.py`)
 ```python
-# Shopify Store
-url = "https://shop.mystore.com/collections/electronics"
-# Automatically detected as page-based pagination
-# Crawls: ?page=1, ?page=2, ?page=3, etc.
-
-# WooCommerce Site
-url = "https://mywordpress.com/shop/?product_cat=laptops"
-# Automatically detected as page-based pagination
-# Crawls: ?product_cat=laptops&page=1, ?product_cat=laptops&page=2, etc.
+REQUIRED_KEYS = [
+    "productName",
+    "productLink",
+]
 ```
 
-**API Endpoints:**
+### **Browser Configuration** (`utils/scraper_utils.py`)
 ```python
-# REST API
-url = "https://api.example.com/v1/products?category=electronics"
-# Automatically detected as limit-offset pagination
-# Crawls: ?category=electronics&limit=20&offset=0, ?category=electronics&limit=20&offset=20, etc.
+def get_browser_config() -> BrowserConfig:
+    return BrowserConfig(
+        browser_type="chromium",
+        headless=True,  # Set to False for debugging
+        viewport_width=1080,
+        viewport_height=720,
+        verbose=True,
+        user_agent=user_agent,
+    )
 ```
 
-**Complex URLs (Like Omega Motor):**
+### **LLM Configuration**
 ```python
-omega_url = "https://omegamotor.com.tr/en/product/?rated_output=1,50;2,20;3,00;4,00;5,50;7,50;10,00;15,00;18,50;22,00;30,00;45,00;55,00&body_size=80;90;110;112;132;160;180;200;225&product_code=&rated_speed=&efficiency_class=IE3&body_material=Al&mountig=&min_rated_voltage=230;400&pol_number=2;4;6;8&service_factor=&view=1&page=0"
-
-# Automatically detected as page-based pagination
-# Preserves all complex parameters while managing pagination
-# Next page: same URL with page=1 instead of page=0
+def get_llm_strategy() -> LLMExtractionStrategy:
+    return LLMExtractionStrategy(
+        llm_config=LLMConfig(
+            provider="groq/deepseek-r1-distill-llama-70b",
+            api_token="your_api_token_here",
+        ),
+        schema=Venue.model_json_schema(),
+        extraction_type="schema",
+        instruction="Extract ALL products from this webpage...",
+        input_format="markdown",
+        verbose=False,
+    )
 ```
 
 ## 📊 Output
 
 ### **CSV Output**
-The crawler generates a CSV file with extracted product data:
+The crawler generates CSV files with extracted product data:
 ```csv
 productName,productLink
 "IE3 3kW 1000rpm, Al 132S6, 3Ph 50Hz 400V/690V D/Y, IMB5",https://omegamotor.com.tr/en/product/detail/561
-"IE3 3kW 1000rpm, Al 132S6, 3Ph 50Hz 400V/690V D/Y, IMB14",https://omegamotor.com.tr/en/product/detail/563
 "SAI Cylinders with groove profile",https://www.bibus.nl/en/sai-cylinders-with-groove-profile-ma01
 ```
 
@@ -189,41 +204,85 @@ pdfs/
     └── manual.pdf_cleaned.pdf
 ```
 
-## ⚙️ Configuration
+## 🔍 Pagination System
 
-### **Core Configuration** (`config.py`)
+### **Supported Pagination Types**
+
+1. **Page-Based**: `?page=1`, `?p=2`, `?pg=3`
+2. **Offset-Based**: `?offset=20`, `?start=40`, `?skip=60`
+3. **Limit-Offset**: `?limit=20&offset=40`
+4. **Cursor-Based**: `?cursor=abc123`, `?after=xyz789`
+5. **JavaScript-Based**: Dynamic pagination using button clicks
+
+### **Automatic Detection**
+
+The system automatically detects pagination patterns by:
+- Analyzing URL parameters
+- Checking for existing pagination parameters
+- Identifying domain-specific patterns
+- Supporting JavaScript-based pagination for dynamic sites
+
+### **JavaScript Pagination**
+
+For sites with dynamic pagination, the crawler can:
+- Execute JavaScript to click pagination buttons
+- Extract content from multiple pages
+- Handle infinite scroll or "Load More" functionality
+- Process all pages in a single session
+
+## 🧹 PDF Processing Features
+
+### **QR Code Removal**
+- Automatically detects QR codes using OpenCV and pyzbar
+- Estimates background color for seamless removal
+- Handles multiple QR codes per page
+- Supports enhanced detection for small QR codes
+
+### **Text Cleaning**
+- Removes specific text patterns with background color matching
+- Uses OCR to identify text locations
+- Preserves document layout and formatting
+- Configurable padding around removed text
+
+### **Cover Page Addition**
+- Automatically adds custom cover pages to processed PDFs
+- Uses `cover.png` as the template
+- Maintains PDF quality and structure
+
+## 🔧 Advanced Usage
+
+### **Custom Pagination Patterns**
+
+Modify the `append_page_param` function in `utils/scraper_utils.py`:
+
 ```python
-REQUIRED_KEYS = [
-    "productName",
-    "productLink",
-]
+def append_page_param(base_url: str, page_number: int, pagination_type: str = "auto") -> str:
+    # Add your custom pagination logic here
+    pass
 ```
 
-### **Browser Configuration** (`utils/scraper_utils.py`)
+### **Custom Data Extraction**
+
+Modify the LLM instruction in `get_llm_strategy()`:
+
 ```python
-def get_browser_config() -> BrowserConfig:
-    return BrowserConfig(
-        browser_type="chromium",
-        headless=False,  # Set to True for production
-        verbose=True,    # Enable debug logging
-        headers={"User-Agent": user_agent},
-    )
+instruction=(
+    "Extract ALL products from this webpage. Focus on product grids, cards, and catalog items.\n\n"
+    "EXTRACT:\n"
+    "- productName: Complete product name/title\n"
+    "- productLink: Full URL to product detail page\n\n"
+    "Add your custom extraction requirements here..."
+)
 ```
 
-### **LLM Configuration**
+### **PDF Processing Customization**
+
+Modify `cleaner.py` for custom PDF processing:
+
 ```python
-def get_llm_strategy() -> LLMExtractionStrategy:
-    return LLMExtractionStrategy(
-        llm_config=LLMConfig(
-            provider="groq/deepseek-r1-distill-llama-70b",
-            api_token="your_api_token_here",
-        ),
-        schema=Venue.model_json_schema(),
-        extraction_type="schema",
-        instruction="Extract ALL products from this webpage...",
-        input_format="markdown",
-        verbose=True,
-    )
+def pdf_processing(search_text: str, file_path: str):
+    # Customize PDF processing logic
+    pass
 ```
 
 ## 🔍 Troubleshooting
@@ -235,22 +294,24 @@ def get_llm_strategy() -> LLMExtractionStrategy:
    - Verify the URL is accessible
    - Check for anti-bot protection
    - Ensure the LLM API key is valid
+   - Verify CSS selectors are correct
 
 2. **Pagination not working**:
-   - The enhanced pagination system should automatically detect patterns
    - Check if the website uses a custom pagination system
    - Verify the URL format in the input file
+   - Try JavaScript-based pagination for dynamic sites
+   - Check browser console for errors
 
 3. **PDF downloads failing**:
    - Check file size limits
    - Verify PDF links are accessible
    - Check for authentication requirements
-   - Ensure Tesseract is installed for PDF processing
+   - Ensure Tesseract is installed and configured
 
 4. **Import errors**:
    - Install all required dependencies: `pip install -r requirements.txt`
-   - Install additional PDF processing dependencies if needed
-   - Check Python version compatibility
+   - Check Python version compatibility (3.8+)
+   - Verify system dependencies (Tesseract, Poppler)
 
 ### **Debug Mode**
 
@@ -260,21 +321,19 @@ Enable verbose logging by setting `verbose=True` in the browser configuration:
 def get_browser_config() -> BrowserConfig:
     return BrowserConfig(
         browser_type="chromium",
-        headless=False,  # Set to True for production
+        headless=False,  # Set to False for debugging
         verbose=True,    # Enable debug logging
-        headers={"User-Agent": user_agent},
     )
 ```
 
-### **Environment Setup**
+### **Performance Optimization**
 
-For PDF processing, ensure you have:
-- **Tesseract OCR**: Install from https://github.com/tesseract-ocr/tesseract
-- **Poppler**: For PDF to image conversion
-- **OpenCV**: For image processing
-- **Pillow**: For image manipulation
+- **Rate Limiting**: Adjust delays in `main.py` (currently 3-15 seconds)
+- **Session Reuse**: Efficient session handling for better performance
+- **Duplicate Prevention**: Prevents downloading identical PDFs
+- **Graceful Error Handling**: Continues crawling even if individual pages fail
 
-## 📈 Performance
+## 📈 Performance Considerations
 
 ### **Optimizations**
 - **Intelligent Delays**: Random delays between requests to be respectful
@@ -283,35 +342,9 @@ For PDF processing, ensure you have:
 - **Graceful Error Handling**: Continues crawling even if individual pages fail
 
 ### **Rate Limiting**
-- Configurable delays between pages (3-7 seconds)
+- Configurable delays between pages (3-15 seconds)
 - Respectful crawling practices
 - Automatic retry mechanisms
-
-## 🔧 Advanced Usage
-
-### **Custom Pagination Patterns**
-
-If you need to handle custom pagination patterns, you can modify the `append_page_param` function in `utils/scraper_utils.py`:
-
-```python
-def append_page_param(base_url: str, page_number: int, pagination_type: str = "auto") -> str:
-    # Add your custom pagination logic here
-    pass
-```
-
-### **Custom Data Extraction**
-
-Modify the LLM instruction in `get_llm_strategy()` to extract different data:
-
-```python
-instruction=(
-    "Extract ALL products from this webpage. Focus on product grids, cards, and catalog items.\n\n"
-    "EXTRACT:\n"
-    "- productName: Complete product name/title\n"
-    "- productLink: Full URL to product detail page\n\n"
-    "Add your custom extraction requirements here..."
-)
-```
 
 ## 🤝 Contributing
 
@@ -332,6 +365,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **DeepSeek**: For the intelligent extraction model
 - **OpenCV**: For image processing capabilities
 - **Tesseract**: For OCR functionality
+- **Poppler**: For PDF processing utilities
 
 ## 📞 Support
 
@@ -340,3 +374,12 @@ If you encounter any issues or have questions:
 2. Review the code comments for configuration options
 3. Open an issue on the repository
 4. Check the example output files for expected formats
+
+## 🔄 Recent Updates
+
+- Enhanced pagination system with automatic detection
+- JavaScript-based pagination for dynamic sites
+- Advanced PDF processing with QR code removal
+- Improved duplicate detection and prevention
+- Better error handling and logging
+- Support for complex URL parameters

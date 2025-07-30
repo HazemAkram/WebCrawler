@@ -4,6 +4,7 @@ import hashlib
 import re
 import ssl 
 import certifi
+import asyncio
 
 import aiofiles
 import aiohttp
@@ -78,6 +79,115 @@ def sanitize_folder_name(product_name: str) -> str:
     
     return sanitized
 
+
+def generate_pdf_filename(pdf_url: str, product_name: str) -> str:
+    """
+    Generate an appropriate filename for a PDF URL, handling extensionless URLs.
+    
+    Args:
+        pdf_url (str): The URL of the PDF file
+        product_name (str): The name of the product for fallback naming
+        
+    Returns:
+        str: A sanitized filename with .pdf extension
+    """
+    from urllib.parse import urlparse, parse_qs
+    
+    # Parse the URL
+    parsed_url = urlparse(pdf_url)
+    path = parsed_url.path
+    query = parsed_url.query
+    
+    # Try to extract filename from URL path
+    if path and path != '/':
+        # Get the last part of the path
+        path_parts = [part for part in path.split('/') if part]
+        if path_parts:
+            filename = path_parts[-1]
+            # Remove any existing extension
+            if '.' in filename:
+                filename = filename.rsplit('.', 1)[0]
+            # Add .pdf extension
+            filename = f"{filename}.pdf"
+        else:
+            # No meaningful path, use query parameters or fallback
+            filename = generate_filename_from_query(query, product_name)
+    else:
+        # No path, use query parameters or fallback
+        filename = generate_filename_from_query(query, product_name)
+    
+    # Sanitize the filename
+    filename = sanitize_filename(filename)
+    
+    return filename
+
+
+def generate_filename_from_query(query: str, product_name: str) -> str:
+    """
+    Generate filename from URL query parameters or product name.
+    
+    Args:
+        query (str): URL query string
+        product_name (str): Product name for fallback
+        
+    Returns:
+        str: Generated filename
+    """
+    if query:
+        # Try to extract meaningful parameters
+        params = parse_qs(query)
+        
+        # Look for common ID parameters
+        for param_name in ['id', 'file_id', 'doc_id', 'download_id']:
+            if param_name in params:
+                return f"{param_name}_{params[param_name][0]}.pdf"
+        
+        # Look for type parameters
+        for param_name in ['type', 'file_type', 'doc_type']:
+            if param_name in params:
+                return f"document_{params[param_name][0]}.pdf"
+        
+        # Use first parameter as fallback
+        first_param = list(params.keys())[0]
+        first_value = params[first_param][0]
+        return f"{first_param}_{first_value}.pdf"
+    
+    # Ultimate fallback: use product name
+    return f"{sanitize_folder_name(product_name)}.pdf"
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize a filename to be safe for filesystem use.
+    
+    Args:
+        filename (str): Original filename
+        
+    Returns:
+        str: Sanitized filename
+    """
+    # Remove or replace invalid characters
+    invalid_chars = r'[<>:"|?*\x00-\x1f]'
+    sanitized = re.sub(invalid_chars, '_', filename)
+    
+    # Remove leading/trailing spaces and dots
+    sanitized = sanitized.strip(' .')
+    
+    # Replace multiple consecutive underscores with single underscore
+    sanitized = re.sub(r'_+', '_', sanitized)
+    
+    # Limit length to prevent filesystem issues
+    if len(sanitized) > 200:  # Leave room for path
+        name, ext = sanitized.rsplit('.', 1) if '.' in sanitized else (sanitized, '')
+        sanitized = name[:200-len(ext)-1] + (f'.{ext}' if ext else '')
+    
+    # Ensure the name is not empty
+    if not sanitized:
+        sanitized = "unnamed_document.pdf"
+    
+    return sanitized
+
+
 # https://www.ors.com.tr/en/tek-sirali-sabit-bilyali-rulmanlar
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
@@ -114,9 +224,7 @@ async def download_pdf_links(
         # print(extracted_data)
 
         html = extracted_data
-        print(type(html))
         soup = BeautifulSoup(html, "html.parser")
-        print(type(soup))
 
         # page_content = response.content
 
@@ -126,8 +234,33 @@ async def download_pdf_links(
 
         for a in soup.find_all("a", href=True):
             href = a["href"]
+            full_url = urljoin(product_url, href)
+            
+            # Enhanced PDF detection - check multiple indicators
+            is_pdf_link = False
+            
+            # 1. Check for .pdf extension
             if href.lower().endswith(".pdf"):
-                full_url = urljoin(product_url, href)
+                is_pdf_link = True
+            # 2. Check for PDF-related keywords in URL
+            elif any(keyword in href.lower() for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data', 'sheet', 'guide', 'instruction']):
+                is_pdf_link = True
+
+            # 3. Check for PDF-related keywords in link text
+            elif a.get_text().strip():
+                link_text = a.get_text().strip().lower()
+                if any(keyword in link_text for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data sheet', 'user guide', 'instruction', 'installation', 'operation']):
+                    is_pdf_link = True
+
+            # 4. Check for common PDF download patterns
+            elif any(pattern in href.lower() for pattern in ['/download', '/file', '/doc', '/attachment', '/media', '/assets', '/files', '/documents']):
+                is_pdf_link = True
+
+            # 5. Check for industrial/manufacturing specific patterns
+            elif any(pattern in href.lower() for pattern in ['/technical', '/specs', '/specifications', '/data', '/info', '/details']):
+                is_pdf_link = True
+            
+            if is_pdf_link:
                 # Check for duplicates within this page
                 if full_url not in seen_pdf_urls_in_page:
                     pdf_links.append(full_url)
@@ -159,7 +292,8 @@ async def download_pdf_links(
         # Download each PDF with duplicate checking
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
             for pdf_url in pdf_links:
-                filename = os.path.basename(urlparse(pdf_url).path)
+                # Enhanced filename generation for extensionless URLs
+                filename = generate_pdf_filename(pdf_url, product_name)
                 save_path = os.path.join(productPath, filename)
                 
                 # # Check if this exact PDF URL has been downloaded before (global tracking)
@@ -176,8 +310,24 @@ async def download_pdf_links(
                 try:
                     async with session.get(pdf_url) as resp:
                         if resp.status == 200:
+                            # Validate content type for PDF files
+                            content_type = resp.headers.get('content-type', '').lower()
+                            is_pdf_content = (
+                                'application/pdf' in content_type or
+                                'pdf' in content_type or
+                                content_type.startswith('application/octet-stream') or
+                                content_type.startswith('binary/')
+                            )
+                            
                             # Read the content to check for duplicates
                             content = await resp.read()
+                            
+                            # Additional validation: check if content starts with PDF magic bytes
+                            if not is_pdf_content and len(content) >= 4:
+                                pdf_magic_bytes = b'%PDF'
+                                if not content.startswith(pdf_magic_bytes):
+                                    print(f"⚠️ Skipping non-PDF content from {pdf_url} (Content-Type: {content_type})")
+                                    continue
                             
                             # Check if content is identical to any existing PDF
                             content_hash = hashlib.md5(content).hexdigest()
@@ -191,6 +341,11 @@ async def download_pdf_links(
                                 download_pdf_links.content_hashes = set()
                             download_pdf_links.content_hashes.add(content_hash)
                             
+                            # Ensure filename has .pdf extension if it doesn't already
+                            if not filename.lower().endswith('.pdf'):
+                                filename += '.pdf'
+                                save_path = os.path.join(productPath, filename)
+                            
                             async with aiofiles.open(save_path, "wb") as f:
                                 await f.write(content)
                             
@@ -201,12 +356,45 @@ async def download_pdf_links(
                             # pdf_processing(search_text=product_name.lower(), file_path=save_path)
                             print(f"📄 Downloaded PDF: {save_path}")
                         else:
-                            print(f"❌ Failed to download: {pdf_url}")
+                            print(f"❌ Failed to download: {pdf_url} (Status: {resp.status})")
                 except Exception as e:
                     print(f"❌ Error downloading {pdf_url}: {e}")
 
     except Exception as e:
-        print(f"⚠️ Error processing {product_url}: {e}")
+        print(f"⚠️ Error During processing  {product_url} pdf : {e}")
+
+def get_page_number(base_url: str): 
+    
+    try:
+        parsed = urlparse(base_url)
+        query_params = parse_qs(parsed.query)
+        
+        # Remove any existing pagination parameters
+        pagination_params_to_remove = [
+            'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
+            'offset', 'start', 'skip', 'from',
+            'limit', 'size', 'per_page', 'items_per_page',
+            'cursor', 'after', 'before', 'next', 'prev',
+            'page_id', 'pageid', 'pageno', 'pagenum'
+        ]
+
+        pagintaion_type = ""
+        for param in query_params: 
+            for rparam in pagination_params_to_remove: 
+                if param == rparam: 
+                    pagintaion_type = param
+
+        return int(query_params[pagintaion_type][0])
+    except Exception as e: 
+        
+        if str(e) == "''": 
+            print(f"⚠️ Error During Extracting Page Number URL IS NOT PAGINTABLE ")
+            return None
+        
+        else : 
+            print(f"⚠️ Error During Extracting Page Number : {e}")
+            return None
+
 
 def append_page_param(base_url: str, page_number: int, pagination_type: str = "auto") -> str:
     """
@@ -229,97 +417,75 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
     Returns:
         str: URL with appropriate pagination parameter
     """
-    
-    # Parse the URL
-    parsed = urlparse(base_url)
-    query_params = parse_qs(parsed.query)
-    
-    # Remove any existing pagination parameters
-    pagination_params_to_remove = [
-        'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
-        'offset', 'start', 'skip', 'from',
-        'limit', 'size', 'per_page', 'items_per_page',
-        'cursor', 'after', 'before', 'next', 'prev',
-        'page_id', 'pageid', 'pageno', 'pagenum'
-    ]
-    
-    for param in pagination_params_to_remove:
-        query_params.pop(param, None)
-    
-    # Determine pagination type if auto
-    if pagination_type == "auto":
-        pagination_type = _detect_pagination_type(base_url)
-    
-    # Calculate pagination values based on type
-    if pagination_type == "page":
-        query_params['p'] = [str(page_number)]
-    elif pagination_type == "offset":
-        query_params['offset'] = [str((page_number - 1) * 20)]  # Assuming 20 items per page
-    elif pagination_type == "start":
-        query_params['start'] = [str((page_number - 1) * 20)]
-    elif pagination_type == "skip":
-        query_params['skip'] = [str((page_number - 1) * 20)]
-    elif pagination_type == "limit_offset":
-        query_params['limit'] = ['20']
-        query_params['offset'] = [str((page_number - 1) * 20)]
-    elif pagination_type == "cursor":
-        # For cursor-based, we'll use a simple numeric cursor
-        # In real scenarios, you might need to get the actual cursor from previous page
-        query_params['cursor'] = [str(page_number * 20)]
-    elif pagination_type == "after":
-        query_params['after'] = [str(page_number * 20)]
-    elif pagination_type == "before":
-        query_params['before'] = [str(page_number * 20)]
-    else:
-        # Default to page-based pagination
-        query_params['page'] = [str(page_number)]
-    
-    # Reconstruct the URL
-    new_query = urlencode(query_params, doseq=True)
-    new_parsed = parsed._replace(query=new_query)
-    
-    return urlunparse(new_parsed)
-
-
-def _detect_pagination_type(url: str) -> str:
-    """
-    Automatically detect the pagination type from URL patterns.
-    
-    Args:
-        url (str): The URL to analyze
+    try: 
+        # Parse the URL
+        parsed = urlparse(base_url)
+        query_params = parse_qs(parsed.query)
         
-    Returns:
-        str: Detected pagination type
-    """    
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
-    
-    # Check for existing pagination parameters
-    if any(param in query_params for param in ['page', 'p', 'pg', 'page_num', 'pageNumber']):
-        return "page"
-    elif any(param in query_params for param in ['offset', 'start', 'skip']):
-        return "offset"
-    elif 'limit' in query_params:
-        return "limit_offset"
-    elif any(param in query_params for param in ['cursor', 'after', 'before']):
-        return "cursor"
-    
-    # Check URL path patterns
-    path = parsed.path.lower()
-    if any(pattern in path for pattern in ['/page/', '/p/', '/pg/']):
-        return "page"
-    elif any(pattern in path for pattern in ['/offset/', '/start/', '/skip/']):
-        return "offset"
-    
-    # Check domain-specific patterns
-    domain = parsed.netloc.lower()
-    if any(platform in domain for platform in ['shopify', 'woocommerce', 'magento']):
-        return "page"
-    elif any(platform in domain for platform in ['api.', 'rest.', 'graphql']):
-        return "offset"
-    
-    # Default to page-based pagination
-    return "page"
+        
+        # Remove any existing pagination parameters
+        pagination_params_to_remove = [
+            'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
+            'offset', 'start', 'skip', 'from',
+            'limit', 'size', 'per_page', 'items_per_page',
+            'cursor', 'after', 'before', 'next', 'prev',
+            'page_id', 'pageid', 'pageno', 'pagenum'
+        ]
+        pagination_type = ""
+        for param in query_params: 
+            for r_param in pagination_params_to_remove: 
+                if param == r_param: 
+                    pagination_type = param
+                    break
+
+        pagintaion_page = query_params[pagination_type]
+        query_params.pop(pagination_type, None)
+
+        # Calculate pagination values based on type
+        if (
+            pagination_type == "page" or 
+            pagination_type == 'p' or 
+            pagination_type == 'pg' or 
+            pagination_type == 'page_num' or 
+            pagination_type == 'page_number' or 
+            pagination_type == 'pageNumber'
+        ):
+            query_params[pagination_type] = [str(page_number)]
+        elif pagination_type == "offset":
+            query_params['offset'] = [str((page_number - 1) * 20)]  # Assuming 20 items per page
+        elif pagination_type == "start":
+            query_params['start'] = [str((page_number - 1) * 20)]
+        elif pagination_type == "skip":
+            query_params['skip'] = [str((page_number - 1) * 20)]
+        elif pagination_type == "limit_offset":
+            query_params['limit'] = ['20']
+            query_params['offset'] = [str((page_number - 1) * 20)]
+        elif pagination_type == "cursor":
+            # For cursor-based, we'll use a simple numeric cursor
+            # In real scenarios, you might need to get the actual cursor from previous page
+            query_params['cursor'] = [str(page_number * 20)]
+        elif pagination_type == "after":
+            query_params['after'] = [str(page_number * 20)]
+        elif pagination_type == "before":
+            query_params['before'] = [str(page_number * 20)]
+        # else:
+        #     # Default to page-based pagination
+        #     query_params['page'] = [str(page_number)]
+        
+        # Reconstruct the URL
+        new_query = urlencode(query_params, doseq=True)
+        new_parsed = parsed._replace(query=new_query)
+        
+        return urlunparse(new_parsed)
+    except Exception as e :
+
+        if str(e)  == "''": 
+            print(f"⚠️ Error During Appending page parameter URL IS NOT PAGINTABLE")
+            return base_url
+        else: 
+            print(f"⚠️ Error during Append Page Parameter : {e}")
+            return base_url
+
 
 def get_browser_config() -> BrowserConfig:
     """
@@ -334,7 +500,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=False,  # Whether to run in headless mode (no GUI)
+        headless=True,  # Whether to run in headless mode (no GUI)
         viewport_width = 1080,  # Width of the browser viewport
         viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
@@ -463,16 +629,104 @@ async def fetch_and_process_page(
             - List[dict]: A list of processed products from the page.
             - bool: A flag indicating if the "No Results Found" message was encountered.
     """
-    
-    button_selector = ".load-more-button"  # CSS selector for the "Load More" button
 
+    # Debugging: Print the URL being fetched
+    print(f"Fetching page {page_number} from URL: {url}")    
+
+
+    # Check if "No Results Found" message is present
+    no_results = await check_no_results(
+        crawler,
+        css_selector,
+        url,
+        session_id
+    )
+
+    if no_results:
+        print(f"------------------------------------------------------------------------- 🏁 No results found on page {page_number}. Stopping pagination. from the first run !! -------------------------------------------------------------------------"    )
+        return [], True  # No more results, signal to stop crawling
+
+    # Fetch page content with the extraction strategy
+    result = await crawler.arun(
+        url,
+        config=CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS,  # Do not use cached data
+            extraction_strategy=llm_strategy,  # Strategy for data extraction
+            target_elements = css_selector,  # Target specific content on the page
+            session_id=session_id,  # Unique session ID for the crawl
+            scan_full_page=True,
+            remove_overlay_elements=True,
+            page_timeout=30000,
+            verbose=True,  # Enable verbose logging
+
+        ),
+    )
+
+    if not (result.success and result.extracted_content):
+        print(f"Error fetching page {page_number}: {result.error_message}")
+        return [], False
+
+    # Parse extracted content
+    extracted_data = json.loads(result.extracted_content)
+    print(type(extracted_data))
+    if not extracted_data:
+        print(f"No products found on page {page_number}.")
+        return [], False
+
+    # Process product
+    complete_venues = []
+    for venue in extracted_data:
+        # Debugging: Print each venue to understand its structure
+        print("Processing venue:", venue)
+
+        # Ignore the 'error' key if it's False
+        if venue.get("error") is False:
+            venue.pop("error", None)  # Remove the 'error' key if it's False
+
+        if not is_complete_venue(venue, required_keys):
+            continue  # Skip incomplete venues
+
+        if is_duplicate_venue(venue["productName"], seen_names):
+            print(f"Duplicate venue '{venue['productName']}' found. Skipping.")
+            continue  # Skip duplicate venues
+
+        # Add venue to the list
+        seen_names.add(venue["productName"])
+
+        if "productLink" in venue:
+            venue["productLink"] = venue["productLink"].replace("/en/en/", "/en/")
+
+            complete_venues.append(venue)
+
+    if not complete_venues:
+        print(f"No complete venues found on page {page_number}.")
+        return [], False
+
+    print(f"Extracted {len(complete_venues)} venues from page {page_number}.")
+
+    return complete_venues, False  # Continue crawling
+
+async def fetch_and_process_page_with_js(
+    crawler: AsyncWebCrawler,
+    page_url: str,
+    llm_strategy: LLMExtractionStrategy,
+    button_selector: str,
+    elements: list,
+    required_keys: list,
+    seen_names: set,
+) -> Tuple[list, bool]:
+    """
+    JS-based extraction for sites with dynamic pagination. Extracts product rows using JS, then applies LLM extraction per page.
+    Returns (venues, no_results) just like fetch_and_process_page.
+    """
     js_commands = f"""
         console.log('[JS] Starting data extraction...');
         let allRowsData = [];
-        const rowSelectors = '{", ".join(css_selector)}';
+        const rowSelectors = '{", ".join(elements)}';
         const buttonSelector = '{button_selector}';
-        const maxPages = 3;
+        const maxPages = 2;
         let currentPage = 1;
+
 
         // Helper function to extract rows
         function extractRows() {{
@@ -526,239 +780,75 @@ async def fetch_and_process_page(
         return allRowsData;
     """
 
-
-
-    # Debugging: Print the URL being fetched
-    print(f"Fetching page {page_number} from URL: {url}")    
-
-
-    # Check if "No Results Found" message is present
-    no_results = await check_no_results(
-        crawler,
-        css_selector,
-        url,
-        session_id
-    )
-
-    if no_results:
-        print(f"------------------------------------------------------------------------- 🏁 No results found on page {page_number}. Stopping pagination. from the first run !! -------------------------------------------------------------------------"    )
-        return [], True  # No more results, signal to stop crawling
-
-    # Fetch page content with the extraction strategy
-    result = await crawler.arun(
-        url,
-        config=CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,  # Do not use cached data
-            extraction_strategy=llm_strategy,  # Strategy for data extraction
-            target_elements = css_selector,  # Target specific content on the page
-            # excluded_tags = ['script', 'style', 'head', 'footer', 'header', 'aside'],  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
-            session_id=session_id,  # Unique session ID for the crawl
-            # js_code=js_commands,  # JavaScript to handle pagination
-            simulate_user= True, 
-            verbose=True,  # Enable verbose logging
-        ),
-    )
-
-    print(Venue.model_json_schema())
-
-    resultfile = "result.txt"
-    with open(resultfile, 'w', encoding='utf-8') as file: 
-        file.write(str(result))
-    print(f"result value saved into {resultfile}")
-
-    htmlstring = result.html
-    filename = "html_file.html"
-    with open(filename, "w",  encoding='utf-8') as file:
-        file.write(htmlstring)
-    print(f"result.html saved to {filename}")
-
-    htmlstring = result.cleaned_html
-    filename = "cleaned_html_file.html"
-    with open(filename, "w",  encoding='utf-8') as file:
-        file.write(htmlstring)
-    print(f"result.html saved to {filename}")
-
-    htmlstring = result.fit_html
-    filename = 'fit_html.html'
-    with open(filename, 'w', encoding='utf-8') as file: 
-        file.write(htmlstring)
-
-
-    if not (result.success and result.extracted_content):
-        print(f"Error fetching page {page_number}: {result.error_message}")
-        return [], False
-
-    # Parse extracted content
-    extracted_data = json.loads(result.extracted_content)
-    print(type(extracted_data))
-    if not extracted_data:
-        print(f"No products found on page {page_number}.")
-        return [], False
-
-    # Process product
     complete_venues = []
-    for venue in extracted_data:
-        # Debugging: Print each venue to understand its structure
-        print("Processing venue:", venue)
+    try:
+        results = await crawler.arun(
+            url=page_url,
+            config=CrawlerRunConfig(
+                extraction_strategy=None,
+                cache_mode=CacheMode.BYPASS,
+                target_elements=elements,
+                scan_full_page=True,
+                remove_overlay_elements=True,
+                page_timeout=30000,
+                session_id="js_extraction_session",
+                js_code=js_commands,
+            )
+        )
 
-        # Ignore the 'error' key if it's False
-        if venue.get("error") is False:
-            venue.pop("error", None)  # Remove the 'error' key if it's False
 
-        if not is_complete_venue(venue, required_keys):
-            continue  # Skip incomplete venues
+        jsstring = results.js_execution_result
+        filename = "js_execution_result.txt"
+        with open(filename, 'w', encoding='utf-8') as file:
+            file.write(str(jsstring))
 
-        if is_duplicate_venue(venue["productName"], seen_names):
-            print(f"Duplicate venue '{venue['productName']}' found. Skipping.")
-            continue  # Skip duplicate venues
-
-        # Add venue to the list
-        seen_names.add(venue["productName"])
-
-        if "productLink" in venue:
-            venue["productLink"] = venue["productLink"].replace("/en/en/", "/en/")
-
-            complete_venues.append(venue)
-
-    if not complete_venues:
-        print(f"No complete venues found on page {page_number}.")
-        return [], False
-
-    print(f"Extracted {len(complete_venues)} venues from page {page_number}.")
-
-    # ### APPLYING LLM BASED FILTER TO FILTER THE VENUES FROM THE NOISES ###
-    # print(f"🔍 Applying LLM filter to {len(complete_venues)} extracted items...")
-    
-    # # Apply LLM filtering to remove non-product items
-    # filtered_venues = await filter_products_with_llm(
-    #     crawler=crawler,
-    #     complete_venues=complete_venues,
-    #     current_url=url,
-    #     session_id=f"{session_id}_filter"
-    # )
-    
-    # # Update the complete_venues list with filtered results
-    # complete_venues = filtered_venues
-    
-    # print(f"✅ After LLM filtering: {len(complete_venues)} real products remaining")
-    
-    # if not complete_venues:
-    #     print(f"No real products found on page {page_number} after filtering.")
-    #     return [], False
-
-    return complete_venues, False  # Continue crawling
-
-# async def filter_products_with_llm(
-#     crawler: AsyncWebCrawler,
-#     complete_venues: List[dict],
-#     current_url: str,
-#     session_id: str = "product_filter_session"
-# ) -> List[dict]:
-#     """
-#     Uses LLM to filter the complete_venues list and remove non-product items.
-    
-#     Args:
-#         crawler (AsyncWebCrawler): The web crawler instance
-#         complete_venues (List[dict]): List of extracted items (products and non-products)
-#         current_url (str): The current page URL for context
-#         session_id (str): Session identifier for the crawler
-        
-#     Returns:
-#         List[dict]: Filtered list containing only real products
-#     """
-    
-#     if not complete_venues:
-#         print("No venues to filter.")
-#         return []
-    
-#     try:
-#         print(f"🔍 Filtering {len(complete_venues)} items using LLM...")
-        
-#         # Initialize Groq client with error handling
-#         try:
-#             # Try different initialization methods
-#             try:
-#                 client = groq.Groq(
-#                     api_key="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"
-#                 )
-#             except TypeError:
-#                 # Try alternative initialization if the first fails
-#                 client = groq.Groq()
-#                 client.api_key = "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"
-            
-#             print("✅ Groq client initialized successfully")
-#         except Exception as groq_error:
-#             print(f"❌ Failed to initialize Groq client: {groq_error}")
-#             print(f"Groq error type: {type(groq_error)}")
-#             print("Returning original list without filtering.")
-#             return complete_venues
-        
-#         # Prepare the prompt
-#         prompt = f"""
-# You are given a JSON array that contains a mix of entries. Each entry includes a productName and a productLink. 
-# Your task is to carefully analyze each item and return only the entries that represent actual physical products, such as specific devices or models.
-# Include only entries that clearly refer to individual products (e.g., hardware items, identifiable models or SKUs).
-# Exclude general categories, software, industry solutions, accessories, customer stories, or applications.
-# Keep the original format of the JSON (same key names and structure).
-# Output only the filtered list of actual products.
-# Use clues like the URL structure, and naming patterns (e.g., specific product names vs. general terms).
-# Return ONLY the JSON array:
-
-# {json.dumps(complete_venues, indent=2)}
-# """
-        
-#         # Call the LLM
-#         chat_completion = client.chat.completions.create(
-#             messages=[
-#                 {
-#                     "role": "user",
-#                     "content": prompt
-#                 }
-#             ],
-#             model="deepseek-r1-distill-llama-70b",
-#             temperature=0.1,
-#             max_tokens=4000
-#         )
-        
-#         # Extract the response
-#         llm_response = chat_completion.choices[0].message.content
-        
-#         # Parse the LLM response
-#         try:
-#             # Try to extract JSON from the response
-#             import re
-#             json_match = re.search(r'\[.*\]', llm_response, re.DOTALL)
-#             if json_match:
-#                 filtered_results = json.loads(json_match.group())
-#             else:
-#                 # If no JSON array found, try to parse the entire response
-#                 filtered_results = json.loads(llm_response)
-            
-#             # Extract only the real products
-#             real_products = []
-#             for item in filtered_results:
-#                 if item.get("isRealProduct", True):
-#                     # Remove the filtering metadata and keep only product data
-#                     product_data = {
-#                         "productName": item["productName"],
-#                         "productLink": item["productLink"]
-#                     }
-#                     real_products.append(product_data)
-#                 else:
-#                     print(f"❌ Filtered out: '{item['productName']}' - {item.get('reason', 'No reason provided')}")
-            
-#             print(f"✅ LLM filtering complete: {len(real_products)}/{len(complete_venues)} items kept as real products")
-#             return real_products
-            
-#         except json.JSONDecodeError as e:
-#             print(f"⚠️ Failed to parse LLM response: {e}")
-#             print(f"LLM Response length: {len(llm_response)}")
-#             print(f"LLM Response preview: {llm_response[:200]}...")
-#             print(f"LLM Response end: ...{llm_response[-200:]}")
-#             print("Returning original list without filtering.")
-#             return complete_venues
-            
-#     except Exception as e:
-#         print(f"⚠️ Error during LLM filtering: {e}")
-#         print("Returning original list without filtering.")
-#         return complete_venues
+        js_extracted_content = None
+        if hasattr(results, 'js_execution_result') and results.js_execution_result:
+            # Try to get the results from the JS execution
+            if isinstance(results.js_execution_result, dict) and 'results' in results.js_execution_result:
+                js_extracted_content = results.js_execution_result['results'][0]
+            else:
+                js_extracted_content = results.js_execution_result
+        if not js_extracted_content:
+            print("No content extracted via JS")
+            return [], True
+        for items in js_extracted_content:
+            print(f"processing page: {items['page']}, data length: {len(items['data'])}")
+            products_string = "".join([item['html'] for item in items['data']])
+            session_id = f"js_extraction_session_{items['page']}"
+            raw_html_url = f"raw:\n{page_url}<div>\n{products_string}\n</div>"
+            result = await crawler.arun(
+                url=raw_html_url,
+                config=CrawlerRunConfig(
+                    extraction_strategy=llm_strategy,
+                    session_id=session_id
+                )
+            )
+            if not result.extracted_content:
+                print(f"\tNo content extracted for page {items['page']}")
+                continue
+            extracted_content = json.loads(result.extracted_content)
+            print(f"Extracted {len(extracted_content)} products from page {items['page']}")
+            new_products = 0
+            for product in extracted_content:
+                print(f"\tprocessing product: {product}")
+                if product.get("error") is False:
+                    product.pop("error", None)
+                if not is_complete_venue(product, required_keys):
+                    continue
+                if is_duplicate_venue(product["productName"], seen_names):
+                    print(f"\tDuplicate: {product['productName']}")
+                    continue
+                if "productLink" in product:
+                    product["productLink"] = product["productLink"].replace("/en/en/", "/en/")
+                seen_names.add(product["productName"])
+                complete_venues.append(product)
+                new_products += 1
+            print(f"\tAdded {new_products} unique products")
+        if not complete_venues:
+            print("\tNo product to scrape")
+            return [], True
+        return complete_venues, False
+    except Exception as e:
+        print(f"Error during JS-based crawling: {str(e)}")
+        return [], True

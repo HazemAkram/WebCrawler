@@ -19,6 +19,10 @@ pytesseract==0.3.10
 pyzbar==0.1.9
 pdf2image==1.16.3
 
+# Fuzzy matching and text processing
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.21.1
+
 # Data processing and analysis
 pandas==2.1.4
 numpy==1.25.2
@@ -26,3 +30,5 @@ numpy==1.25.2
 # Additional utilities
 requests==2.31.0
 urllib3==2.1.0
+
+# NOTE: Ensure you have a 'sites.tsv' file with columns: url, css_selector, button_selector (tab-separated)

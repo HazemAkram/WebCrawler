@@ -91,11 +91,13 @@ deepseek-ai-web-crawler/
    sudo apt-get install tesseract-ocr poppler-utils
    ```
 
-4. **Set up environment variables**:
+4. **Set up environment variables** (optional):
    Create a `.env` file with your API keys:
    ```
    GROQ_API_KEY=your_groq_api_key_here
    ```
+   
+   **Note**: You can also enter your API key directly in the GUI application.
 
 5. **Configure Tesseract path** (if needed):
    Update the path in `cleaner.py` line 139:
@@ -115,6 +117,13 @@ deepseek-ai-web-crawler/
    ```
 
 2. **Run the crawler**:
+
+   **Option A: GUI Interface (Recommended)**
+   ```bash
+   python web_crawler_gui.py
+   ```
+   
+   **Option B: Command Line**
    ```bash
    python main.py
    ```
@@ -127,6 +136,16 @@ The crawler will:
 - Download associated PDFs
 - Process and clean PDFs (remove QR codes, add cover pages)
 - Save results to CSV files
+
+### **GUI Features**
+
+The GUI application provides:
+- **API Configuration**: Enter your API key and select your preferred LLM model
+- **File Selection**: Browse and select your CSV file with site configurations
+- **Real-time Progress**: Monitor crawling progress with detailed logs
+- **API Testing**: Test your API connection before starting the crawl
+- **User Preferences**: Automatically saves and loads your settings
+- **Environment Integration**: Automatically detects API keys from environment variables
 
 ### **Input File Format**
 
@@ -166,12 +185,14 @@ def get_browser_config() -> BrowserConfig:
 ```
 
 ### **LLM Configuration**
+The crawler now supports multiple LLM providers and models. You can configure this through the GUI or by modifying the code:
+
 ```python
-def get_llm_strategy() -> LLMExtractionStrategy:
+def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
     return LLMExtractionStrategy(
         llm_config=LLMConfig(
-            provider="groq/deepseek-r1-distill-llama-70b",
-            api_token="your_api_token_here",
+            provider=model,  # User-selected model
+            api_token=api_key,  # User-provided API key
         ),
         schema=Venue.model_json_schema(),
         extraction_type="schema",
@@ -180,6 +201,11 @@ def get_llm_strategy() -> LLMExtractionStrategy:
         verbose=False,
     )
 ```
+
+**Supported Models:**
+- **Groq**: `groq/deepseek-r1-distill-llama-70b`, `groq/llama3-8b-8192`, `groq/llama3-70b-8192`, `groq/mixtral-8x7b-32768`
+- **OpenAI**: `openai/gpt-4o`, `openai/gpt-4o-mini`
+- **Anthropic**: `anthropic/claude-3-5-sonnet-20241022`, `anthropic/claude-3-haiku-20240307`
 
 ## 📊 Output
 

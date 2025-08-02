@@ -15,7 +15,7 @@ import re
 # Import the crawler modules
 from main import crawl_from_sites_csv, read_sites_from_csv
 from utils.scraper_utils import get_browser_config, get_llm_strategy, get_regex_strategy
-from config import REQUIRED_KEYS
+from config import REQUIRED_KEYS, DEFAULT_CONFIG, ENV_VARS
 
 class EnhancedLogger:
     """Custom logger that filters and formats messages for the GUI"""
@@ -83,7 +83,7 @@ class EnhancedLogger:
             match = re.search(r'Found (\d+) PDF\(s\) for product: (.+)', message)
             if match:
                 product_name = match.group(2)[:50] + "..." if len(match.group(2)) > 50 else match.group(2)
-                return f"📄 Found {match.group(1)} PDF(s) for: {product_name}"
+                return f"{'='*50}\n📄 Found {match.group(1)} PDF(s) for: {product_name}"
         
         elif "Downloaded PDF:" in message:
             pdf_path = message.split("Downloaded PDF: ")[1]
@@ -147,14 +147,16 @@ class WebCrawlerGUI:
         self.current_products = 0
         
         # Configuration
-        self.config = {
-            'api_key': '',
-            'csv_file': '',
-            'output_folder': 'output'
-        }
+        self.config = DEFAULT_CONFIG.copy()
         
         self.setup_ui()
         self.setup_logging()
+        
+        # Load API key from environment if available
+        self.load_api_key_from_env()
+        
+        # Load user preferences
+        self.load_user_preferences()
         
     def setup_ui(self):
         """Setup the main UI components"""
@@ -225,9 +227,28 @@ class WebCrawlerGUI:
         show_btn = ttk.Button(api_frame, text="Show/Hide", command=self.toggle_api_key_visibility)
         show_btn.grid(row=0, column=2)
         
+        # Model Selection
+        ttk.Label(api_frame, text="LLM Model:").grid(row=1, column=0, sticky=tk.W, padx=(0, 10))
+        
+        self.model_var = tk.StringVar(value=DEFAULT_CONFIG["default_model"])
+        model_combo = ttk.Combobox(api_frame, textvariable=self.model_var, width=47, state="readonly")
+        model_combo['values'] = DEFAULT_CONFIG["available_models"]
+        model_combo.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(0, 10), pady=(5, 0))
+        
+        # API Key validation status
+        self.api_status_label = ttk.Label(api_frame, text="⚠️ API key required", foreground="orange")
+        self.api_status_label.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        
+        # Test API Connection button
+        test_api_btn = ttk.Button(api_frame, text="Test Connection", command=self.test_api_connection)
+        test_api_btn.grid(row=2, column=2, pady=(5, 0))
+        
         # Environment file info
-        env_info = ttk.Label(api_frame, text="Note: You can also set API key in .env file", foreground="gray")
-        env_info.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        env_info = ttk.Label(api_frame, text="Note: You can also set API key in .env file as GROQ_API_KEY", foreground="gray")
+        env_info.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        
+        # Bind API key changes to validation
+        self.api_key_var.trace('w', self.validate_api_key)
         
     def setup_control_section(self, parent):
         """Setup control buttons section"""
@@ -422,21 +443,25 @@ class WebCrawlerGUI:
             
     def toggle_api_key_visibility(self):
         """Toggle API key visibility"""
-        current_show = self.api_key_var.get()
-        if current_show:
-            # Find the entry widget and change its show attribute
-            for widget in self.root.winfo_children():
-                if isinstance(widget, ttk.Frame):
-                    for child in widget.winfo_children():
-                        if isinstance(child, ttk.LabelFrame):
-                            for grandchild in child.winfo_children():
-                                if isinstance(grandchild, ttk.Entry):
-                                    if grandchild.cget('show') == '*':
-                                        grandchild.config(show='')
-                                    else:
-                                        grandchild.config(show='*')
-                                    break
-                                    
+        # Find the API key entry widget in the API frame
+        for widget in self.root.winfo_children():
+            if isinstance(widget, ttk.Frame):
+                for child in widget.winfo_children():
+                    if isinstance(child, ttk.LabelFrame) and child.cget('text') == "API Configuration":
+                        for grandchild in child.winfo_children():
+                            if isinstance(grandchild, ttk.Entry) and grandchild.cget('show') in ['*', '']:
+                                current_show = grandchild.cget('show')
+                                grandchild.config(show='' if current_show == '*' else '*')
+                                return
+            
+    def validate_api_key(self, *args):
+        """Validate the API key and update the status label"""
+        api_key = self.api_key_var.get()
+        if api_key:
+            self.api_status_label.config(text="✅ API key valid", foreground="green")
+        else:
+            self.api_status_label.config(text="⚠️ API key required", foreground="orange")
+            
     def validate_inputs(self):
         """Validate user inputs before starting crawling"""
         if not self.csv_path_var.get():
@@ -458,6 +483,11 @@ class WebCrawlerGUI:
                     return False
         except Exception as e:
             messagebox.showerror("Error", f"Error reading CSV file: {str(e)}")
+            return False
+            
+        # Validate API key
+        if not self.api_key_var.get():
+            messagebox.showerror("Error", "API Key is required. Please enter it in the API Configuration section.")
             return False
             
         return True
@@ -505,8 +535,12 @@ class WebCrawlerGUI:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Run the crawler
-            loop.run_until_complete(self.crawl_with_progress())
+            # Run the crawler with API key and model
+            loop.run_until_complete(self.crawl_with_progress(
+                self.csv_path_var.get(),
+                self.api_key_var.get(),
+                self.model_var.get()
+            ))
             
         except Exception as e:
             self.add_log_message(f"❌ Error during crawling: {str(e)}")
@@ -515,25 +549,20 @@ class WebCrawlerGUI:
             # Update UI on main thread
             self.root.after(0, self.crawling_finished)
             
-    async def crawl_with_progress(self):
+    async def crawl_with_progress(self, csv_path, api_key, model):
         """Run crawler with progress updates"""
         try:
             # Read sites
-            sites = read_sites_from_csv(self.csv_path_var.get())
+            sites = read_sites_from_csv(csv_path)
             total_sites = len(sites)
             
             self.add_log_message(f"📊 Loaded {total_sites} sites to crawl")
-            
-            # Get configurations
-            browser_config = get_browser_config()
-            llm_strategy = get_llm_strategy()
-            regex_strategy = get_regex_strategy()
             
             # Create output directory
             os.makedirs(self.config['output_folder'], exist_ok=True)
             
             # Run the crawler
-            await crawl_from_sites_csv(self.csv_path_var.get())
+            await crawl_from_sites_csv(csv_path, api_key, model)
             
         except Exception as e:
             self.add_log_message(f"❌ Crawling error: {str(e)}")
@@ -581,8 +610,162 @@ class WebCrawlerGUI:
             except Exception as e:
                 messagebox.showerror("Error", f"Error saving logs: {str(e)}")
                 
+    def load_api_key_from_env(self):
+        """Load API key from environment variables if available"""
+        # Check for different API providers
+        api_key = None
+        provider = None
+        
+        for provider_name, env_var in ENV_VARS.items():
+            api_key = os.environ.get(env_var)
+            if api_key:
+                provider = provider_name
+                break
+        
+        if api_key:
+            self.api_key_var.set(api_key)
+            self.validate_api_key() # Re-validate to show green status
+            self.add_log_message(f"✅ API key loaded from environment variable {env_var}")
+            
+            # Auto-select appropriate model based on provider
+            if provider == "GROQ_API_KEY":
+                if self.model_var.get() not in ["groq/deepseek-r1-distill-llama-70b", "groq/llama3-8b-8192", "groq/llama3-70b-8192", "groq/mixtral-8x7b-32768"]:
+                    self.model_var.set("groq/deepseek-r1-distill-llama-70b")
+            elif provider == "OPENAI_API_KEY":
+                if self.model_var.get() not in ["openai/gpt-4o", "openai/gpt-4o-mini"]:
+                    self.model_var.set("openai/gpt-4o")
+            elif provider == "ANTHROPIC_API_KEY":
+                if self.model_var.get() not in ["anthropic/claude-3-5-sonnet-20241022", "anthropic/claude-3-haiku-20240307"]:
+                    self.model_var.set("anthropic/claude-3-5-sonnet-20241022")
+        else:
+            self.add_log_message("⚠️ API key not found in environment variables. Please enter it in the GUI.")
+
+    def save_user_preferences(self):
+        """Save user preferences to a JSON file"""
+        try:
+            preferences = {
+                "api_key": self.api_key_var.get(),
+                "model": self.model_var.get(),
+                "csv_file": self.csv_path_var.get(),
+                "output_folder": self.config.get("output_folder", "output")
+            }
+            
+            with open("user_preferences.json", "w") as f:
+                json.dump(preferences, f, indent=2)
+                
+        except Exception as e:
+            self.add_log_message(f"⚠️ Could not save preferences: {str(e)}")
+
+    def load_user_preferences(self):
+        """Load user preferences from JSON file"""
+        try:
+            if os.path.exists("user_preferences.json"):
+                with open("user_preferences.json", "r") as f:
+                    preferences = json.load(f)
+                
+                # Only load preferences if they're not already set by environment
+                if not self.api_key_var.get() and preferences.get("api_key"):
+                    self.api_key_var.set(preferences["api_key"])
+                
+                if preferences.get("model"):
+                    self.model_var.set(preferences["model"])
+                
+                if preferences.get("csv_file"):
+                    self.csv_path_var.set(preferences["csv_file"])
+                    self.update_file_info(preferences["csv_file"])
+                
+                if preferences.get("output_folder"):
+                    self.config["output_folder"] = preferences["output_folder"]
+                    
+                self.add_log_message("✅ User preferences loaded")
+                
+        except Exception as e:
+            self.add_log_message(f"⚠️ Could not load preferences: {str(e)}")
+
+    def test_api_connection(self):
+        """Test the API connection with the current API key and model"""
+        api_key = self.api_key_var.get()
+        model = self.model_var.get()
+
+        if not api_key:
+            messagebox.showwarning("Warning", "Please enter an API key in the API Configuration section.")
+            return
+
+        self.add_log_message(f"🔍 Testing API connection with model: {model}")
+
+        # Run test in a separate thread
+        test_thread = threading.Thread(target=self._run_api_test, args=(api_key, model), daemon=True)
+        test_thread.start()
+
+    def _run_api_test(self, api_key, model):
+        """Run the API test in a separate thread"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the test
+            result = loop.run_until_complete(self._test_api_async(api_key, model))
+            
+            # Update UI on main thread
+            if result:
+                self.root.after(0, lambda: self.add_log_message("✅ API connection test successful!"))
+                self.root.after(0, lambda: messagebox.showinfo("Success", "API connection test successful!"))
+            else:
+                self.root.after(0, lambda: self.add_log_message("❌ API connection test failed"))
+                self.root.after(0, lambda: messagebox.showerror("Error", "API connection test failed. Please check your API key and model."))
+                
+        except Exception as e:
+            self.root.after(0, lambda: self.add_log_message(f"❌ API test error: {str(e)}"))
+            self.root.after(0, lambda: messagebox.showerror("Error", f"API test error: {str(e)}"))
+
+    async def _test_api_async(self, api_key, model):
+        """Async method to test API connection"""
+        try:
+            from utils.scraper_utils import get_llm_strategy
+            from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
+            
+            # Create LLM strategy with the provided API key and model
+            llm_strategy = get_llm_strategy(api_key=api_key, model=model)
+            
+            # Create a simple test crawler
+            from utils.scraper_utils import get_browser_config
+            browser_config = get_browser_config()
+            
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                # Test with a simple HTML snippet
+                test_html = """
+                <div class="product">
+                    <h3>Test Product</h3>
+                    <a href="https://example.com/product/1">View Product</a>
+                </div>
+                """
+                
+                result = await crawler.arun(
+                    url=f"raw:\nhttps://example.com\n{test_html}",
+                    config=CrawlerRunConfig(
+                        extraction_strategy=llm_strategy,
+                        cache_mode=CacheMode.BYPASS,
+                        session_id="api_test_session"
+                    )
+                )
+                
+                if result.success and result.extracted_content:
+                    self.add_log_message("✅ API test completed successfully!")
+                    return True
+                else:
+                    self.add_log_message(f"❌ API test failed: {result.error_message}")
+                    return False
+                    
+        except Exception as e:
+            self.add_log_message(f"❌ API test exception: {str(e)}")
+            return False
+
     def on_closing(self):
         """Handle application closing"""
+        # Save user preferences before closing
+        self.save_user_preferences()
+        
         if self.crawler_running:
             if messagebox.askokcancel("Quit", "Crawler is running. Do you want to quit?"):
                 self.stop_crawling()

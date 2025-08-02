@@ -38,10 +38,6 @@ from utils.data_utils import is_complete_venue, is_duplicate_venue
 
 load_dotenv()
 
-# LLM Configration
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-LLM_MODEL = "groq/deepseek-r1-distill-llama-70b"
-
 def sanitize_folder_name(product_name: str) -> str:
     """
     Sanitizes a product name to be used as a folder name.
@@ -533,18 +529,29 @@ def get_regex_strategy() -> RegexExtractionStrategy:
 
 
 
-def get_llm_strategy() -> LLMExtractionStrategy:
+def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
     """
     Returns the configuration for the language model extraction strategy.
-
+    
+    Args:
+        api_key (str): The API key for the LLM provider. If None, will try to get from environment.
+        model (str): The LLM model to use. Defaults to "groq/deepseek-r1-distill-llama-70b".
+    
     Returns:
         LLMExtractionStrategy: The settings for how to extract data using LLM.
     """
+    # Use provided API key or fall back to environment variable
+    if api_key is None:
+        api_key = os.getenv('GROQ_API_KEY')
+    
+    if not api_key:
+        raise ValueError("API key is required. Please provide an API key or set GROQ_API_KEY environment variable.")
+    
     # https://docs.crawl4ai.com/api/strategies/#llmextractionstrategy
     return LLMExtractionStrategy(
         llm_config=LLMConfig(
-            provider = LLM_MODEL, # LLM model to use
-            api_token= GROQ_API_KEY,  # API token for the LLM provider    
+            provider = model, # LLM model to use
+            api_token= api_key,  # API token for the LLM provider    
         ),
         schema=Venue.model_json_schema(),  # JSON schema of the data model
         extraction_type="schema",  # Type of extraction to perform

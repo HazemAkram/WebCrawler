@@ -33,12 +33,17 @@ def read_sites_from_csv(input_file):
             })
     return sites
 
-async def crawl_from_sites_csv(input_file: str):
+async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b"):
     """
     Crawl venue data from a list of category/product links, selectors, and button selectors stored in a CSV.
+    
+    Args:
+        input_file (str): Path to the CSV file containing site configurations
+        api_key (str): API key for the LLM provider. If None, will try to get from environment.
+        model (str): LLM model to use. Defaults to "groq/deepseek-r1-distill-llama-70b".
     """
     browser_config = get_browser_config()
-    llm_strategy = get_llm_strategy()
+    llm_strategy = get_llm_strategy(api_key=api_key, model=model)
     regex_strategy = get_regex_strategy()
     session_id = "bulk_crawl_session"
 

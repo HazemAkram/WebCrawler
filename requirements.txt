@@ -31,4 +31,13 @@ numpy==1.25.2
 requests==2.31.0
 urllib3==2.1.0
 
-# NOTE: Ensure you have a 'sites.tsv' file with columns: url, css_selector, button_selector (tab-separated)
+# Web interface dependencies
+Flask==3.0.0
+Flask-SocketIO==5.3.6
+python-socketio==5.10.0
+python-engineio==4.8.0
+
+# GUI dependencies (tkinter is usually included with Python)
+# tkinter - comes with Python installation
+
+# NOTE: Ensure you have a 'sites.csv' file with columns: url, css_selector, button_selector (comma-separated)

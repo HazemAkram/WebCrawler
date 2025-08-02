@@ -8,14 +8,12 @@ import asyncio
 
 import aiofiles
 import aiohttp
-from urllib.parse import urljoin, urlparse
 
 from typing import List, Set, Tuple
 from fake_useragent import UserAgent
-from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
 
 import re
 
@@ -39,6 +37,10 @@ from utils.data_utils import is_complete_venue, is_duplicate_venue
 
 
 load_dotenv()
+
+# LLM Configration
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+LLM_MODEL = "groq/deepseek-r1-distill-llama-70b"
 
 def sanitize_folder_name(product_name: str) -> str:
     """
@@ -91,7 +93,6 @@ def generate_pdf_filename(pdf_url: str, product_name: str) -> str:
     Returns:
         str: A sanitized filename with .pdf extension
     """
-    from urllib.parse import urlparse, parse_qs
     
     # Parse the URL
     parsed_url = urlparse(pdf_url)
@@ -195,7 +196,8 @@ async def download_pdf_links(
         product_name: str,
         output_folder: str, 
         session_id="pdf_download_session", 
-        regex_strategy: RegexExtractionStrategy = None 
+        regex_strategy: RegexExtractionStrategy = None , 
+        domain_name: str = None,
         ):
     
     """
@@ -204,174 +206,172 @@ async def download_pdf_links(
     Only creates a product folder if PDFs are actually found.
     """
 
+
+
+
     # Global set to track downloaded PDFs across all products
     if not hasattr(download_pdf_links, 'downloaded_pdfs'):
         download_pdf_links.downloaded_pdfs = set()
 
-    # try:
+    try:
 
-    response = await crawler.arun(
-    url=product_url,
-    config=CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,  # Do not use cached data
-        extraction_strategy=regex_strategy,  # Strategy for data extraction
-        session_id=session_id,  # Unique session ID for the crawl
-        css_selector= "a",  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
-    ),
-)
-    
-    extracted_data = response.html
-    # print(extracted_data)
-
-    html = extracted_data
-    soup = BeautifulSoup(html, "html.parser")
-
-    # page_content = response.content
-
-    # Extract all <a> href links
-    pdf_links = []
-    seen_pdf_urls_in_page = set()  # Track PDF URLs found on this specific page
-
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        full_url = urljoin(product_url, href)
+        response = await crawler.arun(
+        url=product_url,
+        config=CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS,  # Do not use cached data
+            extraction_strategy=regex_strategy,  # Strategy for data extraction
+            session_id=session_id,  # Unique session ID for the crawl
+            css_selector= "a",  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
+        ),
+    )
         
-        # Enhanced PDF detection - check multiple indicators
-        is_pdf_link = False
-        
-        # 1. Check for .pdf extension
-        if href.lower().endswith(".pdf"):
-            is_pdf_link = True
-        # 2. Check for PDF-related keywords in URL
-        elif any(keyword in href.lower() for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data', 'sheet', 'guide', 'instruction']):
-            is_pdf_link = True
+        extracted_data = response.html
+        # print(extracted_data)
 
-        # 3. Check for PDF-related keywords in link text
-        elif a.get_text().strip():
-            link_text = a.get_text().strip().lower()
-            if any(keyword in link_text for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data sheet', 'user guide', 'instruction', 'installation', 'operation']):
+        html = extracted_data
+        soup = BeautifulSoup(html, "html.parser")
+
+        # page_content = response.content
+
+        # Extract all <a> href links
+        pdf_links = []
+        seen_pdf_urls_in_page = set()  # Track PDF URLs found on this specific page
+
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            full_url = urljoin(product_url, href)
+            
+            # Enhanced PDF detection - check multiple indicators
+            is_pdf_link = False
+            
+            # 1. Check for .pdf extension
+            if href.lower().endswith(".pdf"):
+                is_pdf_link = True
+            # 2. Check for PDF-related keywords in URL
+            elif any(keyword in href.lower() for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data', 'sheet', 'guide', 'instruction']):
                 is_pdf_link = True
 
-        # 4. Check for common PDF download patterns
-        elif any(pattern in href.lower() for pattern in ['/download', '/file', '/doc', '/attachment', '/media', '/assets', '/files', '/documents']):
-            is_pdf_link = True
+            # 3. Check for PDF-related keywords in link text
+            elif a.get_text().strip():
+                link_text = a.get_text().strip().lower()
+                if any(keyword in link_text for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data sheet', 'user guide', 'instruction', 'installation', 'operation']):
+                    is_pdf_link = True
 
-        # 5. Check for industrial/manufacturing specific patterns
-        elif any(pattern in href.lower() for pattern in ['/technical', '/specs', '/specifications', '/data', '/info', '/details']):
-            is_pdf_link = True
-        
-        if is_pdf_link:
-            # Check for duplicates within this page
-            if full_url not in seen_pdf_urls_in_page:
-                pdf_links.append(full_url)
-                seen_pdf_urls_in_page.add(full_url)
-            else:
-                print(f"⏭️ Skipping duplicate PDF URL found on same page: {os.path.basename(urlparse(full_url).path)}")
+            # 4. Check for common PDF download patterns
+            elif any(pattern in href.lower() for pattern in ['/download', '/file', '/doc', '/attachment', '/media', '/assets', '/files', '/documents']):
+                is_pdf_link = True
 
-    # Check if any PDFs were found
-    if not pdf_links:
-        print(f"📭 No PDFs found on page for product: {product_name}")
-        print(f"🔗 Product URL: {product_url}")
-        return  # Exit early without creating any folders
-
-    print(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}")
-
-    # Create the download folder if it doesn't exist
-    os.makedirs(output_folder, exist_ok=True)
-
-    productPath = output_folder + f'/{sanitize_folder_name(product_name)}' 
-    if not os.path.exists(productPath):
-        os.makedirs(productPath)
-
-
-    # disable SSL verification for the session
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-
-    # Download each PDF with duplicate checking
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
-        for pdf_url in pdf_links:
-            # Enhanced filename generation for extensionless URLs
-            filename = generate_pdf_filename(pdf_url, product_name)
-            save_path = os.path.join(productPath, filename)
+            # 5. Check for industrial/manufacturing specific patterns
+            elif any(pattern in href.lower() for pattern in ['/technical', '/specs', '/specifications', '/data', '/info', '/details']):
+                is_pdf_link = True
             
-            # # Check if this exact PDF URL has been downloaded before (global tracking)
-            # if pdf_url in download_pdf_links.downloaded_pdfs:
-            #     print(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {filename}")
-            #     continue
-            
-            # # Check if file already exists in the product folder
-            # if os.path.exists(save_path):
-            #     print(f"⏭️ File already exists: {save_path}")
-            #     download_pdf_links.downloaded_pdfs.add(pdf_url)
-            #     continue
-            
-            # try:
-            async with session.get(pdf_url) as resp:
-                if resp.status == 200:
-                    # Validate content type for PDF files
-                    content_type = resp.headers.get('content-type', '').lower()
-                    is_pdf_content = (
-                        'application/pdf' in content_type or
-                        'pdf' in content_type or
-                        content_type.startswith('application/octet-stream') or
-                        content_type.startswith('binary/')
-                    )
-                    
-                    # Read the content to check for duplicates
-                    content = await resp.read()
-                    
-                    # Additional validation: check if content starts with PDF magic bytes
-                    if not is_pdf_content and len(content) >= 4:
-                        pdf_magic_bytes = b'%PDF'
-                        if not content.startswith(pdf_magic_bytes):
-                            print(f"⚠️ Skipping non-PDF content from {pdf_url} (Content-Type: {content_type})")
-                            continue
-                    
-                    # Check if content is identical to any existing PDF
-                    content_hash = hashlib.md5(content).hexdigest()
-                    # if hasattr(download_pdf_links, 'content_hashes') and content_hash in download_pdf_links.content_hashes:
-                    #     print(f"⏭️ Skipping duplicate content: {filename}")
-                    #     download_pdf_links.downloaded_pdfs.add(pdf_url)
-                    #     continue
-                    
-                    # Store content hash and download the file
-                    if not hasattr(download_pdf_links, 'content_hashes'):
-                        download_pdf_links.content_hashes = set()
-                    download_pdf_links.content_hashes.add(content_hash)
-                    
-                    # Ensure filename has .pdf extension if it doesn't already
-                    if not filename.lower().endswith('.pdf'):
-                        filename += '.pdf'
-                        save_path = os.path.join(productPath, filename)
-                    
-                    async with aiofiles.open(save_path, "wb") as f:
-                        await f.write(content)
-                    
-                    # Mark this URL as downloaded
-                    download_pdf_links.downloaded_pdfs.add(pdf_url)
-
-
-                    domian_url = str()            
-                    search_text = [
-                        # English     Türk     German
-                        'Address', 'Adres', 'Adresse', 
-                        'Telephone', 'Telefon',
-                        'Fax', 'Faks', 
-                        'Email', 'e-posta','e-mail', 'eposta',
-                        domian_url
-                        ]
-                    # here should we put the script of the cleaning the pdf ? 
-                    pdf_processing(search_text=product_name.lower(), file_path=save_path)
-                    print(f"📄 Downloaded PDF: {save_path}")
+            if is_pdf_link:
+                # Check for duplicates within this page
+                if full_url not in seen_pdf_urls_in_page:
+                    pdf_links.append(full_url)
+                    seen_pdf_urls_in_page.add(full_url)
                 else:
-                    print(f"❌ Failed to download: {pdf_url} (Status: {resp.status})")
-            # except Exception as e:
-            #     print(f"❌ Error downloading {pdf_url}: {e}")
+                    print(f"⏭️ Skipping duplicate PDF URL found on same page: {os.path.basename(urlparse(full_url).path)}")
 
-    # except Exception as e:
-    #     print(f"⚠️ Error During processing  {product_url} pdf : {e}")
+        # Check if any PDFs were found
+        if not pdf_links:
+            print(f"📭 No PDFs found on page for product: {product_name}")
+            print(f"🔗 Product URL: {product_url}")
+            return  # Exit early without creating any folders
+
+        print(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}")
+
+        # Create the download folder if it doesn't exist
+        os.makedirs(output_folder, exist_ok=True)
+
+        productPath = output_folder + f'/{sanitize_folder_name(product_name)}' 
+        if not os.path.exists(productPath):
+            os.makedirs(productPath)
+
+
+        # Download each PDF with duplicate checking (SSL verification disabled)
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+            for pdf_url in pdf_links:
+                # Enhanced filename generation for extensionless URLs
+                filename = generate_pdf_filename(pdf_url, product_name)
+                save_path = os.path.join(productPath, filename)
+                
+                # # Check if this exact PDF URL has been downloaded before (global tracking)
+                # if pdf_url in download_pdf_links.downloaded_pdfs:
+                #     print(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {filename}")
+                #     continue
+                
+                # # Check if file already exists in the product folder
+                # if os.path.exists(save_path):
+                #     print(f"⏭️ File already exists: {save_path}")
+                #     download_pdf_links.downloaded_pdfs.add(pdf_url)
+                #     continue
+                
+                try:
+                    async with session.get(pdf_url) as resp:
+                        if resp.status == 200:
+                            # Validate content type for PDF files
+                            content_type = resp.headers.get('content-type', '').lower()
+                            is_pdf_content = (
+                                'application/pdf' in content_type or
+                                'pdf' in content_type or
+                                content_type.startswith('application/octet-stream') or
+                                content_type.startswith('binary/')
+                            )
+                            
+                            # Read the content to check for duplicates
+                            content = await resp.read()
+                            
+                            # Additional validation: check if content starts with PDF magic bytes
+                            if not is_pdf_content and len(content) >= 4:
+                                pdf_magic_bytes = b'%PDF'
+                                if not content.startswith(pdf_magic_bytes):
+                                    print(f"⚠️ Skipping non-PDF content from {pdf_url} (Content-Type: {content_type})")
+                                    continue
+                            
+                            # Check if content is identical to any existing PDF
+                            content_hash = hashlib.md5(content).hexdigest()
+                            # if hasattr(download_pdf_links, 'content_hashes') and content_hash in download_pdf_links.content_hashes:
+                            #     print(f"⏭️ Skipping duplicate content: {filename}")
+                            #     download_pdf_links.downloaded_pdfs.add(pdf_url)
+                            #     continue
+                            
+                            # Store content hash and download the file
+                            if not hasattr(download_pdf_links, 'content_hashes'):
+                                download_pdf_links.content_hashes = set()
+                            download_pdf_links.content_hashes.add(content_hash)
+                            
+                            # Ensure filename has .pdf extension if it doesn't already
+                            if not filename.lower().endswith('.pdf'):
+                                filename += '.pdf'
+                                save_path = os.path.join(productPath, filename)
+                            
+                            async with aiofiles.open(save_path, "wb") as f:
+                                await f.write(content)
+                            
+                            # Mark this URL as downloaded
+                            download_pdf_links.downloaded_pdfs.add(pdf_url)
+
+
+                            search_text = [
+                                # English     Türk     German
+                                'Address', 'Adres', 'Adresse', 
+                                'Telephone', 'Telefon',
+                                'Fax', 'Faks', 
+                                'Email', 'e-posta','e-mail', 'eposta',
+                                domain_name, f"www.{domain_name}"
+                                #product_name.lower()  # Also include product name for removal
+                                ]
+                            # here should we put the script of the cleaning the pdf ? 
+                            pdf_processing(search_text_list=search_text, file_path=save_path)
+                            print(f"📄 Downloaded PDF: {save_path}")
+                        else:
+                            print(f"❌ Failed to download: {pdf_url} (Status: {resp.status})")
+                except Exception as e:
+                    print(f"❌ Error downloading {pdf_url}: {e}")
+
+    except Exception as e:
+        print(f"⚠️ Error During processing  {product_url} pdf : {e}")
 
 def get_page_number(base_url: str): 
     
@@ -543,9 +543,8 @@ def get_llm_strategy() -> LLMExtractionStrategy:
     # https://docs.crawl4ai.com/api/strategies/#llmextractionstrategy
     return LLMExtractionStrategy(
         llm_config=LLMConfig(
-            provider = "groq/deepseek-r1-distill-llama-70b", # LLM model to use
-            api_token= "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",  # API token for the LLM provider    
-            # api_token = "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" # openai API key     
+            provider = LLM_MODEL, # LLM model to use
+            api_token= GROQ_API_KEY,  # API token for the LLM provider    
         ),
         schema=Venue.model_json_schema(),  # JSON schema of the data model
         extraction_type="schema",  # Type of extraction to perform

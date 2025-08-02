@@ -56,21 +56,25 @@ def remove_region(img, bbox, padding=0):
     avg_color = estimate_background_color(img, (x, y, w, h))
     cv2.rectangle(img, (x, y), (x + w, y + h), avg_color, -1)
 
-def replace_text_in_scanned_pdf(search_text, images):
+def replace_text_in_scanned_pdf(search_text_list, images):
     """Removes matching text using fuzzy matching and background filling"""
     modified_images = []
-    search_lower = search_text.lower()
     
     for page_num, img in enumerate(images, 1):
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         data = pytesseract.image_to_data(img_cv, output_type=pytesseract.Output.DICT)
         
         for i, text in enumerate(data["text"]):
-            if fuzz.ratio(text.strip().lower(), search_lower) >= TEXT_MATCH_THRESHOLD:
-                bbox = (data["left"][i], data["top"][i], 
-                        data["width"][i], data["height"][i])
-                remove_region(img_cv, bbox, padding=QR_PADDING)
-                print(f"Removed text at page {page_num}: {text.strip()}")
+            text_lower = text.strip().lower()
+            # Check against all search terms in the list
+            for search_text in search_text_list:
+                search_lower = search_text.lower()
+                if fuzz.ratio(text_lower, search_lower) >= TEXT_MATCH_THRESHOLD:
+                    bbox = (data["left"][i], data["top"][i], 
+                            data["width"][i], data["height"][i])
+                    remove_region(img_cv, bbox, padding=QR_PADDING)
+                    print(f"Removed text at page {page_num}: {text.strip()} (matched: {search_text})")
+                    break  # Remove this text and move to next text item
 
         modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
     
@@ -110,7 +114,7 @@ def remove_qr_codes_from_pdf(images):
     
     return modified_images
 
-def pdf_processing(search_text: str, file_path: str):
+def pdf_processing(search_text_list: list, file_path: str):
     """Main processing pipeline: Text removal -> QR removal -> Save PDF"""
     pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
     
@@ -122,7 +126,7 @@ def pdf_processing(search_text: str, file_path: str):
     print('Conversion complete')
     
     # Processing pipeline
-    text_removed = replace_text_in_scanned_pdf(search_text, pdf_images)
+    text_removed = replace_text_in_scanned_pdf(search_text_list, pdf_images)
     final_images = remove_qr_codes_from_pdf(text_removed)
     
     # Add cover page
@@ -133,6 +137,5 @@ def pdf_processing(search_text: str, file_path: str):
     final_path = f"{file_path}_cleaned.pdf"
     final_images[0].save(final_path, format='PDF', save_all=True, 
                          append_images=final_images[1:])
-    print(f"Cleaned PDF saved to: {final_path}")
     
     

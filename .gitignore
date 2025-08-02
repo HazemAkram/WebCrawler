@@ -2,3 +2,6 @@
 *.csv
 __pycache__
 \output
+*.png
+*.jpg
+*.icn

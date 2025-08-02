@@ -99,11 +99,13 @@ deepseek-ai-web-crawler/
    
    **Note**: You can also enter your API key directly in the GUI application.
 
-5. **Configure Tesseract path** (if needed):
-   Update the path in `cleaner.py` line 139:
-   ```python
-   pytesseract.pytesseract.tesseract_cmd = r"path/to/your/tesseract.exe"
+5. **Test dependencies** (recommended):
+   Run the dependency test script to verify everything is working:
+   ```bash
+   python test_dependencies.py
    ```
+   
+   This will automatically detect Tesseract and Poppler installations and verify they're working correctly.
 
 ## 🚀 Usage
 
@@ -303,13 +305,31 @@ instruction=(
 
 ### **PDF Processing Customization**
 
-Modify `cleaner.py` for custom PDF processing:
+The PDF processing now automatically detects Tesseract and Poppler installations across different operating systems. No manual path configuration is required.
+
+If you need to customize the path detection, modify the `find_tesseract_path()` and `find_poppler_path()` functions in `cleaner.py`:
 
 ```python
-def pdf_processing(search_text: str, file_path: str):
-    # Customize PDF processing logic
-    pass
+def find_tesseract_path():
+    # Add your custom paths here
+    custom_paths = [
+        "/path/to/your/tesseract",
+        # Add more paths as needed
+    ]
+    # ... rest of the function
 ```
+
+### **Automatic Path Detection**
+
+The system automatically detects:
+- **Tesseract OCR**: Common installation paths on Windows, macOS, and Linux
+- **Poppler**: Common installation paths and PATH environment variable
+- **Fallback mechanisms**: System commands (`where` on Windows, `which` on Unix-like systems)
+
+Supported paths:
+- **Windows**: Program Files, Program Files (x86), User AppData
+- **macOS**: Homebrew, system directories
+- **Linux**: System directories, custom installations
 
 ## 🔍 Troubleshooting
 

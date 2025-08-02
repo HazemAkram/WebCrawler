@@ -5,12 +5,192 @@ import pytesseract
 from pyzbar.pyzbar import decode
 from pdf2image import convert_from_path
 from fuzzywuzzy import fuzz  # For fuzzy text matching
+import os
+import platform
+import subprocess
+import shutil
 
 # Configuration constants
 TEXT_MATCH_THRESHOLD = 80    # Fuzzy match threshold (0-100)
 QR_PADDING = 10              # Padding around QR codes
 BG_SAMPLE_MARGIN = 40        # Background estimation margin
 RESCALE_FACTOR = 2           # QR enhancement scale factor
+
+def find_tesseract_path():
+    """
+    Automatically detect Tesseract installation path across different operating systems.
+    Returns the path to tesseract executable or None if not found.
+    """
+    system = platform.system().lower()
+    
+    # Common installation paths
+    common_paths = {
+        'windows': [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            r"C:\Users\{}\AppData\Local\Programs\Tesseract-OCR\tesseract.exe".format(os.getenv('USERNAME', '')),
+            r"C:\tesseract\tesseract.exe",
+        ],
+        'darwin': [  # macOS
+            "/usr/local/bin/tesseract",
+            "/opt/homebrew/bin/tesseract",
+            "/usr/bin/tesseract",
+        ],
+        'linux': [
+            "/usr/bin/tesseract",
+            "/usr/local/bin/tesseract",
+            "/opt/tesseract/bin/tesseract",
+        ]
+    }
+    
+    # Check if tesseract is in PATH
+    if shutil.which("tesseract"):
+        return shutil.which("tesseract")
+    
+    # Check common installation paths
+    paths_to_check = common_paths.get(system, [])
+    for path in paths_to_check:
+        if os.path.exists(path):
+            return path
+    
+    # Try to find using system commands
+    try:
+        if system == 'windows':
+            # Try using where command
+            result = subprocess.run(['where', 'tesseract'], capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip().split('\n')[0]
+        else:
+            # Try using which command
+            result = subprocess.run(['which', 'tesseract'], capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip()
+    except Exception:
+        pass
+    
+    return None
+
+def find_poppler_path():
+    """
+    Automatically detect Poppler installation path across different operating systems.
+    Returns the path to poppler bin directory or None if not found.
+    """
+    system = platform.system().lower()
+    
+    # Common installation paths
+    common_paths = {
+        'windows': [
+            r"C:\Program Files\Release-24.08.0-0\poppler-24.08.0\Library\bin",
+            r"C:\Program Files\poppler\bin",
+            r"C:\poppler\bin",
+            r"C:\Program Files (x86)\poppler\bin",
+        ],
+        'darwin': [  # macOS
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+            "/usr/bin",
+        ],
+        'linux': [
+            "/usr/bin",
+            "/usr/local/bin",
+            "/opt/poppler/bin",
+        ]
+    }
+    
+    # Check if pdftoppm is in PATH
+    if shutil.which("pdftoppm"):
+        pdftoppm_path = shutil.which("pdftoppm")
+        return os.path.dirname(pdftoppm_path)
+    
+    # Check common installation paths
+    paths_to_check = common_paths.get(system, [])
+    for path in paths_to_check:
+        if os.path.exists(path) and os.path.exists(os.path.join(path, "pdftoppm")):
+            return path
+    
+    # For Windows, try to find using system commands
+    if system == 'windows':
+        try:
+            result = subprocess.run(['where', 'pdftoppm'], capture_output=True, text=True)
+            if result.returncode == 0:
+                pdftoppm_path = result.stdout.strip().split('\n')[0]
+                return os.path.dirname(pdftoppm_path)
+        except Exception:
+            pass
+    
+    return None
+
+def setup_dependencies():
+    """
+    Setup and configure Tesseract and Poppler paths.
+    Returns tuple of (tesseract_path, poppler_path) with detected or default paths.
+    """
+    # Detect Tesseract
+    tesseract_path = find_tesseract_path()
+    if tesseract_path:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        print(f"✅ Tesseract found at: {tesseract_path}")
+    else:
+        print("⚠️ Tesseract not found. Please install Tesseract OCR:")
+        print("   Windows: https://github.com/UB-Mannheim/tesseract/wiki")
+        print("   macOS: brew install tesseract")
+        print("   Linux: sudo apt-get install tesseract-ocr")
+        return None, None
+    
+    # Detect Poppler
+    poppler_path = find_poppler_path()
+    if poppler_path:
+        print(f"✅ Poppler found at: {poppler_path}")
+    else:
+        print("⚠️ Poppler not found. Please install Poppler:")
+        print("   Windows: https://github.com/oschwartz10612/poppler-windows/releases")
+        print("   macOS: brew install poppler")
+        print("   Linux: sudo apt-get install poppler-utils")
+        return tesseract_path, None
+    
+    return tesseract_path, poppler_path
+
+def test_dependencies():
+    """
+    Test if Tesseract and Poppler are working correctly.
+    Returns True if both dependencies are working, False otherwise.
+    """
+    print("🔍 Testing dependencies...")
+    
+    # Test Tesseract
+    try:
+        tesseract_path, poppler_path = setup_dependencies()
+        if not tesseract_path:
+            print("❌ Tesseract test failed")
+            return False
+        
+        # Test Tesseract functionality
+        test_image = Image.new('RGB', (100, 100), color='white')
+        result = pytesseract.image_to_string(test_image)
+        print("✅ Tesseract test passed")
+        
+    except Exception as e:
+        print(f"❌ Tesseract test failed: {str(e)}")
+        return False
+    
+    # Test Poppler
+    try:
+        if not poppler_path:
+            print("❌ Poppler test failed - not found")
+            return False
+        
+        # Test if pdftoppm exists in the poppler path
+        pdftoppm_path = os.path.join(poppler_path, "pdftoppm")
+        if not os.path.exists(pdftoppm_path):
+            print(f"❌ Poppler test failed - pdftoppm not found at {pdftoppm_path}")
+            return False
+        
+        print("✅ Poppler test passed")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Poppler test failed: {str(e)}")
+        return False
 
 def preprocess_image(img_cv):
     """Enhances image for QR detection using adaptive thresholding"""
@@ -116,26 +296,48 @@ def remove_qr_codes_from_pdf(images):
 
 def pdf_processing(search_text_list: list, file_path: str):
     """Main processing pipeline: Text removal -> QR removal -> Save PDF"""
-    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    # Setup dependencies
+    tesseract_path, poppler_path = setup_dependencies()
+    if not tesseract_path:
+        print("❌ Cannot proceed without Tesseract. Please install Tesseract OCR.")
+        return
+    if not poppler_path:
+        print("❌ Cannot proceed without Poppler. Please install Poppler.")
+        return
     
-    print(f'Converting {file_path} to images...')
-    pdf_images = convert_from_path(
-        file_path,
-        poppler_path=r"C:\Program Files\Release-24.08.0-0\poppler-24.08.0\Library/bin",
+    try:
+        pdf_images = convert_from_path(
+            file_path,
+            poppler_path=poppler_path,
         )
-    print('Conversion complete')
+    except Exception as e:
+        print(f"❌ Error converting PDF to images: {str(e)}")
+        print("This might be due to:")
+        print("1. Invalid PDF file")
+        print("2. Poppler not properly installed")
+        print("3. Insufficient permissions")
+        return
     
     # Processing pipeline
-    text_removed = replace_text_in_scanned_pdf(search_text_list, pdf_images)
-    final_images = remove_qr_codes_from_pdf(text_removed)
-    
-    # Add cover page
-    cover = Image.open("cover.png")
-    final_images.insert(0, cover)
-    
-    # Save final PDF
-    final_path = f"{file_path}_cleaned.pdf"
-    final_images[0].save(final_path, format='PDF', save_all=True, 
-                         append_images=final_images[1:])
+    try:
+        text_removed = replace_text_in_scanned_pdf(search_text_list, pdf_images)
+        final_images = remove_qr_codes_from_pdf(text_removed)
+        
+        # Add cover page
+        if os.path.exists("cover.png"):
+            cover = Image.open("cover.png")
+            final_images.insert(0, cover)
+        else:
+            print("⚠️ cover.png not found, skipping cover page")
+        
+        # Save final PDF
+        final_path = f"{file_path}.pdf"
+        final_images[0].save(final_path, format='PDF', save_all=True, 
+                             append_images=final_images[1:])
+        print(f"✨ Cleaned PDF saved to: {final_path}")
+        
+    except Exception as e:
+        print(f"❌ Error during PDF processing: {str(e)}")
+        return
     
     

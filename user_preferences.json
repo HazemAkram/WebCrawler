@@ -1,6 +1,0 @@
-{
-  "api_key": "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",
-  "model": "groq/deepseek-r1-distill-llama-70b",
-  "csv_file": "D:/projects/deepseek-ai-web-crawler/sites.csv",
-  "output_folder": "output"
-}

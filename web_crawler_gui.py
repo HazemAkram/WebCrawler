@@ -243,9 +243,13 @@ class WebCrawlerGUI:
         test_api_btn = ttk.Button(api_frame, text="Test Connection", command=self.test_api_connection)
         test_api_btn.grid(row=2, column=2, pady=(5, 0))
         
+        # Test Dependencies button
+        test_deps_btn = ttk.Button(api_frame, text="Test Dependencies", command=self.test_dependencies)
+        test_deps_btn.grid(row=2, column=3, pady=(5, 0), padx=(5, 0))
+        
         # Environment file info
         env_info = ttk.Label(api_frame, text="Note: You can also set API key in .env file as GROQ_API_KEY", foreground="gray")
-        env_info.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        env_info.grid(row=3, column=0, columnspan=4, sticky=tk.W, pady=(5, 0))
         
         # Bind API key changes to validation
         self.api_key_var.trace('w', self.validate_api_key)
@@ -760,6 +764,48 @@ class WebCrawlerGUI:
         except Exception as e:
             self.add_log_message(f"❌ API test exception: {str(e)}")
             return False
+
+    def test_dependencies(self):
+        """Test Tesseract and Poppler installations."""
+        self.add_log_message("🔍 Testing Tesseract and Poppler...")
+        try:
+            # Test Tesseract
+            self.add_log_message("   - Checking Tesseract installation...")
+            import pytesseract
+            try:
+                pytesseract.get_languages()
+                self.add_log_message("    ✅ Tesseract is installed and working.")
+            except ImportError:
+                self.add_log_message("    ❌ Tesseract is not installed. Please install Tesseract OCR.")
+                self.add_log_message("     - On Windows: `choco install tesseract-ocr` or `winget install tesseract-ocr`")
+                self.add_log_message("     - On macOS: `brew install tesseract`")
+                self.add_log_message("     - On Linux: `sudo apt-get install tesseract-ocr` or `sudo apt-get install libtesseract-dev`")
+                self.add_log_message("     - For more details, see https://github.com/madmaze/pytesseract/wiki/Installation")
+            except Exception as e:
+                self.add_log_message(f"    ❌ Tesseract test failed: {e}")
+
+            # Test Poppler
+            self.add_log_message("   - Checking Poppler installation...")
+            import fitz # PyMuPDF
+            try:
+                # Try to open a dummy PDF to check if Poppler is installed
+                fitz.open("dummy.pdf")
+                self.add_log_message("    ✅ Poppler is installed and working.")
+            except ImportError:
+                self.add_log_message("    ❌ Poppler is not installed. Please install Poppler.")
+                self.add_log_message("     - On Windows: `choco install poppler` or `winget install poppler`")
+                self.add_log_message("     - On macOS: `brew install poppler`")
+                self.add_log_message("     - On Linux: `sudo apt-get install poppler-utils`")
+                self.add_log_message("     - For more details, see https://github.com/pymupdf/PyMuPDF/wiki/Installation")
+            except Exception as e:
+                self.add_log_message(f"    ❌ Poppler test failed: {e}")
+
+            self.add_log_message("✅ Dependency tests completed.")
+            messagebox.showinfo("Dependency Tests", "Dependency tests completed. Please check the logs for details.")
+
+        except Exception as e:
+            self.add_log_message(f"❌ Error during dependency tests: {str(e)}")
+            messagebox.showerror("Dependency Tests Error", f"Error during dependency tests: {str(e)}")
 
     def on_closing(self):
         """Handle application closing"""

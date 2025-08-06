@@ -1,24 +1,12 @@
-"""
-DeepSeek AI Web Crawler
-Copyright 2025 Ayaz Mensyoğlu
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-This file is part of the DeepSeek AI Web Crawler project.
-Licensed under the MIT License.
-"""
-
 # DeepSeek AI Web Crawler
+
+<a href="https://github.com/unclecode/crawl4ai">
+  <img src="https://img.shields.io/badge/Powered%20by-Crawl4AI-blue?style=flat-square" alt="Powered by Crawl4AI"/>
+</a>
+
+<a href="https://github.com/unclecode/crawl4ai">
+  <img src="https://raw.githubusercontent.com/unclecode/crawl4ai/main/docs/assets/powered-by-dark.svg" alt="Powered by Crawl4AI" width="200"/>
+</a>
 
 A powerful, AI-powered web crawler that extracts product information from e-commerce websites and downloads associated PDF documents. Features intelligent pagination handling, duplicate detection, and advanced PDF processing with QR code removal and text cleaning.
 
@@ -382,7 +370,7 @@ This project is licensed under the Apache License, Version 2.0 - see the LICENSE
 
 ## 🙏 Acknowledgments
 
-- **Crawl4AI**: For the powerful web crawling framework
+- **Crawl4AI**:For the powerful web crawling framework
 - **Groq**: For the fast LLM inference
 - **DeepSeek**: For the intelligent extraction model
 - **OpenAI**: For GPT models
@@ -390,6 +378,28 @@ This project is licensed under the Apache License, Version 2.0 - see the LICENSE
 - **OpenCV**: For image processing capabilities
 - **Tesseract**: For OCR functionality
 - **Poppler**: For PDF processing utilities
+
+## 📚 Citation
+```bibtex
+@software{deepseek_ai_web_crawler2025,
+  author = {Ayaz Mensyoğlu},
+  title = {DeepSeek AI Web Crawler: AI-Powered Product Information Extraction},
+  year = {2025},
+  publisher = {GitHub},
+  journal = {GitHub Repository},
+  howpublished = {\url{https://github.com/HazemAkram/WebCrawler}},
+  note = {Built with Crawl4AI framework}
+}
+
+@software{crawl4ai2024,
+  author = {UncleCode},
+  title = {Crawl4AI: Open-source LLM Friendly Web Crawler & Scraper},
+  year = {2024},
+  publisher = {GitHub},
+  journal = {GitHub Repository},
+  howpublished = {\url{https://github.com/unclecode/crawl4ai}},
+}
+```
 
 ## 📞 Support
 
@@ -420,4 +430,7 @@ While this software is licensed under Apache 2.0, users must also comply with:
 - **Data Privacy**: Comply with applicable data protection regulations
 - **Responsible Use**: Use the software for legitimate purposes only
 - **Employment Restrictions**: See NOTICE file for employment-based usage restrictions
+- **NOTE**: This software depends on other packages that may be licensed under different open source licenses.
+
+
 

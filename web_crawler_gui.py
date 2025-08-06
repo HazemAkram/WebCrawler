@@ -1,3 +1,13 @@
+"""
+DeepSeek AI Web Crawler
+Copyright (c) 2025 Ayaz Mensyoğlu
+
+This file is part of the DeepSeek AI Web Crawler project.
+Licensed under the Apache License, Version 2.0.
+See NOTICE file for additional terms and conditions.
+"""
+
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
@@ -8,7 +18,6 @@ import json
 from datetime import datetime
 import queue
 import sys
-from io import StringIO
 import traceback
 import re
 
@@ -16,6 +25,19 @@ import re
 from main import crawl_from_sites_csv, read_sites_from_csv
 from utils.scraper_utils import get_browser_config, get_llm_strategy, get_regex_strategy
 from config import REQUIRED_KEYS, DEFAULT_CONFIG, ENV_VARS
+
+# Add to top of web_crawler_gui.py
+import sys
+import os
+
+def resource_path(relative_path):
+    """Get absolute path to resource for PyInstaller"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 
 class EnhancedLogger:
     """Custom logger that filters and formats messages for the GUI"""

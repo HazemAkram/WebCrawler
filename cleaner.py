@@ -1,3 +1,14 @@
+"""
+DeepSeek AI Web Crawler
+Copyright (c) 2025 Ayaz Mensyoğlu
+
+This file is part of the DeepSeek AI Web Crawler project.
+Licensed under the Apache License, Version 2.0.
+See NOTICE file for additional terms and conditions.
+"""
+
+
+
 import numpy as np
 import cv2
 from PIL import Image
@@ -200,17 +211,15 @@ def preprocess_image(img_cv):
         cv2.THRESH_BINARY, 31, 8
     )
 
-def enhance_qr(img_cv):
-    """Improves QR detection through scaling and contrast enhancement"""
-    img_cv = cv2.resize(img_cv, None, fx=RESCALE_FACTOR, fy=RESCALE_FACTOR, 
-                        interpolation=cv2.INTER_CUBIC)
-    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+def enhance_qr(img_cv): 
+    img_cv = cv2.resize(img_cv, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
     contrast_img = clahe.apply(gray)
-    return cv2.adaptiveThreshold(
-        contrast_img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY, 35, 10
-    )
+
+    binary = cv2.adaptiveThreshold(contrast_img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                               cv2.THRESH_BINARY, 35, 10)
+    return binary
 
 def estimate_background_color(img, bbox):
     """Estimates background color using median of area around bounding box"""
@@ -261,38 +270,70 @@ def replace_text_in_scanned_pdf(search_text_list, images):
     return modified_images
 
 def remove_qr_codes_from_pdf(images):
-    """Detects and removes QR codes using unified processing logic"""
+
     modified_images = []
-    
-    for page_num, img in enumerate(images, 1):
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        img_org = img_cv.copy()
-        
-        # First detection attempt
+
+    count = 1
+    for img in images:
+        img_cv = np.array(img)
+        img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+
+        img_org = np.array(img)
+        img_org = cv2.cvtColor(img_org, cv2.COLOR_BGR2RGB)
+
+
+
         processed_img = preprocess_image(img_cv)
         qr_codes = decode(processed_img)
-        scale_factor = 1.0
         
-        # Second attempt with enhanced image
-        if not qr_codes:
-            enhanced_img = enhance_qr(img_cv)
-            qr_codes = decode(enhanced_img)
-            scale_factor = 1/RESCALE_FACTOR
-        
-        # Process detected QR codes
-        for qr in qr_codes:
-            # Scale coordinates to original image size
-            x = int(qr.rect.left * scale_factor)
-            y = int(qr.rect.top * scale_factor)
-            w = int(qr.rect.width * scale_factor)
-            h = int(qr.rect.height * scale_factor)
+        if len(qr_codes) == 0 : 
+            img_enh = enhance_qr(img_cv)
+            qr_codes = decode(img_enh)
             
-            print(f"QR detected at page {page_num}: ({x}, {y}) [{w}x{h}]")
-            remove_region(img_org, (x, y, w, h), padding=QR_PADDING)
-        
-        modified_images.append(Image.fromarray(cv2.cvtColor(img_org, cv2.COLOR_BGR2RGB)))
+            for qr in qr_codes:
+                x, y, w, h = qr.rect  # Get bounding box of QR code
+                x, y, w, h = int(x / 2), int(y / 2), int(w / 2), int(h / 2)
+                    
+                
+                print(f" At page number {count} QR Code detected at ({x}, {y}), size ({w}x{h})")
+                
+                # Estimating background color
+                bg_patch = img_org[max(y-40, 0):min(y+h+40, img_org.shape[0]), max(x-40, 0):min(x+w+40, img_org.shape[1])]
+                avg_color = np.median(bg_patch, axis=(0, 1)) if bg_patch.size > 0 else [255, 255, 255]
+                # Fill the QR code area with the estimated background color
+                cv2.rectangle(img_org, (x, y), (x + w, y + h), avg_color, -1)
+                
+                
+            # Convert back to PIL format
+            modified_images.append(Image.fromarray(cv2.cvtColor(img_org, cv2.COLOR_BGR2RGB)))
+
+        else: 
+            for qr in qr_codes:
+                padding = 10 
+                
+                x, y, w, h = qr.rect  # Get bounding box of QR code
+
+                x = max(x - padding, 0)
+                y = max(y - padding, 0)
+
+                w = w + 2 * padding
+                h = h + 2 * padding
+                
+                print(f" At page number {count} QR Code detected at ({x}, {y}), size ({w}x{h})")
     
+                # Estimating background color
+                bg_patch = img_org[max(y-40, 0):min(y+h+40, img_org.shape[0]), max(x-40, 0):min(x+w+40, img_org.shape[1])]
+                avg_color = np.median(bg_patch, axis=(0, 1)) if bg_patch.size > 0 else [255, 255, 255]
+    
+                # Fill the QR code area with the estimated background color
+                cv2.rectangle(img_org, (x, y), (x + w, y + h), avg_color, -1)
+                
+            # Convert back to PIL format
+            modified_images.append(Image.fromarray(cv2.cvtColor(img_org, cv2.COLOR_BGR2RGB)))
+            count += 1
     return modified_images
+
+
 
 def pdf_processing(search_text_list: list, file_path: str):
     """Main processing pipeline: Text removal -> QR removal -> Save PDF"""
@@ -323,15 +364,39 @@ def pdf_processing(search_text_list: list, file_path: str):
         text_removed = replace_text_in_scanned_pdf(search_text_list, pdf_images)
         final_images = remove_qr_codes_from_pdf(text_removed)
         
-        # Add cover page
+        # Add cover page with smart resizing
         if os.path.exists("cover.png"):
             cover = Image.open("cover.png")
-            final_images.insert(0, cover)
+            
+            # Get dimensions of the first page to determine PDF orientation
+            if final_images:
+                first_page = final_images[0]
+                first_page_width, first_page_height = first_page.size
+                
+                # Check if PDF is horizontal (landscape orientation)
+                is_horizontal = first_page_width > first_page_height
+                
+                if not is_horizontal:
+                    # Resize cover to match first page dimensions for portrait/square PDFs
+                    cover = cover.resize((first_page_width, first_page_height), Image.Resampling.LANCZOS)
+                    print(f"📏 Resized cover to match PDF dimensions: {first_page_width}x{first_page_height}")
+                else:
+                    print(f"📏 PDF is horizontal ({first_page_width}x{first_page_height}), keeping original cover size")
+                
+                final_images.insert(0, cover)
+            else:
+                # If no pages to compare, just add cover as is
+                final_images.insert(0, cover)
+                print("📄 Added cover page (no pages to compare dimensions)")
         else:
             print("⚠️ cover.png not found, skipping cover page")
         
+        # Check if original PDF has more than 3 pages and conditionally remove last page
+        original_pdf_size = len(pdf_images)
+        if original_pdf_size > 3:
+            final_images = final_images[:-1]  
         # Save final PDF
-        final_path = f"{file_path}.pdf"
+        final_path = f"{file_path}"
         final_images[0].save(final_path, format='PDF', save_all=True, 
                              append_images=final_images[1:])
         print(f"✨ Cleaned PDF saved to: {final_path}")

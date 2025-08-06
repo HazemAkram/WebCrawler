@@ -1,3 +1,23 @@
+"""
+DeepSeek AI Web Crawler
+Copyright 2025 Ayaz Mensyoğlu
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+This file is part of the DeepSeek AI Web Crawler project.
+Licensed under the MIT License.
+"""
+
 # DeepSeek AI Web Crawler
 
 A powerful, AI-powered web crawler that extracts product information from e-commerce websites and downloads associated PDF documents. Features intelligent pagination handling, duplicate detection, and advanced PDF processing with QR code removal and text cleaning.
@@ -5,7 +25,7 @@ A powerful, AI-powered web crawler that extracts product information from e-comm
 ## 🚀 Features
 
 ### **AI-Powered Product Extraction**
-- **LLM-Based Extraction**: Uses Groq/DeepSeek R1 Distill Llama 70B for intelligent data extraction
+- **LLM-Based Extraction**: Uses multiple LLM providers (Groq, OpenAI, Anthropic) for intelligent data extraction
 - **Universal Compatibility**: Works with any website layout without custom configuration
 - **Schema Validation**: Ensures extracted data meets required format using Pydantic models
 - **Duplicate Prevention**: Prevents processing duplicate products using name-based detection
@@ -24,6 +44,11 @@ A powerful, AI-powered web crawler that extracts product information from e-comm
 - **Cover Page Addition**: Automatically adds custom cover pages to processed PDFs
 - **Smart Organization**: Organizes PDFs by product name in dedicated folders
 
+### **Multiple Interface Options**
+- **Web Interface**: Modern Flask-based web application with real-time progress tracking
+- **Desktop GUI**: Tkinter-based desktop application with advanced features
+- **Command Line**: Simple command-line interface for automation
+
 ### **Robust Error Handling**
 - **Graceful Degradation**: Continues crawling if individual pages fail
 - **Rate Limiting**: Respectful crawling with configurable delays (3-15 seconds)
@@ -35,18 +60,25 @@ A powerful, AI-powered web crawler that extracts product information from e-comm
 ```
 deepseek-ai-web-crawler/
 ├── main.py                    # Main entry point for the crawler
-├── config.py                  # Configuration constants (required keys)
+├── app.py                     # Flask web application
+├── web_crawler_gui.py         # Tkinter desktop GUI
+├── start_web_interface.py     # Web interface startup script
+├── config.py                  # Configuration constants and settings
 ├── cleaner.py                 # PDF processing and cleaning functionality
-├── sites.csv                  # Input file with URLs and selectors
-├── cover.png                  # Cover page template for PDFs
 ├── models/
 │   └── venue.py              # Defines the Venue data model using Pydantic
 ├── utils/
 │   ├── __init__.py           # Package marker for utils
 │   ├── data_utils.py         # Utility functions for data validation
 │   └── scraper_utils.py      # Enhanced pagination and crawling utilities
-├── pdfs/                     # Output directory for downloaded PDFs
+├── templates/
+│   └── index.html            # Web interface template
+├── uploads/                  # Directory for uploaded CSV files
+├── output/                   # Output directory for downloaded PDFs
 ├── requirements.txt          # Python package dependencies
+├── icon.ico                  # Application icon
+├── LICENSE                   # License file
+├── NOTICE                    # Additional terms and conditions
 └── README.MD                # This file
 ```
 
@@ -95,21 +127,40 @@ deepseek-ai-web-crawler/
    Create a `.env` file with your API keys:
    ```
    GROQ_API_KEY=your_groq_api_key_here
+   OPENAI_API_KEY=your_openai_api_key_here
+   ANTHROPIC_API_KEY=your_anthropic_api_key_here
    ```
-   
-   **Note**: You can also enter your API key directly in the GUI application.
-
-5. **Test dependencies** (recommended):
-   Run the dependency test script to verify everything is working:
-   ```bash
-   python test_dependencies.py
-   ```
-   
-   This will automatically detect Tesseract and Poppler installations and verify they're working correctly.
 
 ## 🚀 Usage
 
-### **Basic Usage**
+### **Option 1: Web Interface (Recommended)**
+
+1. **Start the web interface**:
+   ```bash
+   python start_web_interface.py
+   ```
+   This will automatically open your browser to `http://localhost:5000`
+
+2. **Upload your CSV file** with site configurations
+3. **Enter your API key** and select your preferred model
+4. **Start crawling** and monitor progress in real-time
+
+### **Option 2: Desktop GUI**
+
+1. **Launch the desktop application**:
+   ```bash
+   python web_crawler_gui.py
+   ```
+
+2. **Configure your settings**:
+   - Select your CSV file
+   - Enter your API key
+   - Choose your preferred LLM model
+   - Test your API connection
+
+3. **Start crawling** and monitor progress
+
+### **Option 3: Command Line**
 
 1. **Prepare your input file** (`sites.csv`):
    ```csv
@@ -119,35 +170,9 @@ deepseek-ai-web-crawler/
    ```
 
 2. **Run the crawler**:
-
-   **Option A: GUI Interface (Recommended)**
-   ```bash
-   python web_crawler_gui.py
-   ```
-   
-   **Option B: Command Line**
    ```bash
    python main.py
    ```
-
-The crawler will:
-- Read URLs and selectors from `sites.csv`
-- Automatically detect pagination patterns for each site
-- Crawl all pages using enhanced pagination or JavaScript execution
-- Extract product information using AI
-- Download associated PDFs
-- Process and clean PDFs (remove QR codes, add cover pages)
-- Save results to CSV files
-
-### **GUI Features**
-
-The GUI application provides:
-- **API Configuration**: Enter your API key and select your preferred LLM model
-- **File Selection**: Browse and select your CSV file with site configurations
-- **Real-time Progress**: Monitor crawling progress with detailed logs
-- **API Testing**: Test your API connection before starting the crawl
-- **User Preferences**: Automatically saves and loads your settings
-- **Environment Integration**: Automatically detects API keys from environment variables
 
 ### **Input File Format**
 
@@ -165,49 +190,40 @@ url,css_selector,button_selector
 
 ## 🔧 Configuration
 
-### **Core Configuration** (`config.py`)
+### **Supported LLM Models**
+
+The crawler supports multiple LLM providers and models:
+
+**Groq Models:**
+- `groq/deepseek-r1-distill-llama-70b` (default)
+- `groq/llama3-8b-8192`
+- `groq/llama3-70b-8192`
+- `groq/mixtral-8x7b-32768`
+
+**OpenAI Models:**
+- `openai/gpt-4o`
+- `openai/gpt-4o-mini`
+
+**Anthropic Models:**
+- `anthropic/claude-3-5-sonnet-20241022`
+- `anthropic/claude-3-haiku-20240307`
+
+### **Data Model**
+
+The crawler extracts the following data structure:
 ```python
-REQUIRED_KEYS = [
-    "productName",
-    "productLink",
-]
+class Venue(BaseModel):
+    productName: str    # Complete product name/title
+    productLink: str    # Full URL to product detail page
 ```
 
-### **Browser Configuration** (`utils/scraper_utils.py`)
-```python
-def get_browser_config() -> BrowserConfig:
-    return BrowserConfig(
-        browser_type="chromium",
-        headless=True,  # Set to False for debugging
-        viewport_width=1080,
-        viewport_height=720,
-        verbose=True,
-        user_agent=user_agent,
-    )
-```
+### **Browser Configuration**
 
-### **LLM Configuration**
-The crawler now supports multiple LLM providers and models. You can configure this through the GUI or by modifying the code:
-
-```python
-def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
-    return LLMExtractionStrategy(
-        llm_config=LLMConfig(
-            provider=model,  # User-selected model
-            api_token=api_key,  # User-provided API key
-        ),
-        schema=Venue.model_json_schema(),
-        extraction_type="schema",
-        instruction="Extract ALL products from this webpage...",
-        input_format="markdown",
-        verbose=False,
-    )
-```
-
-**Supported Models:**
-- **Groq**: `groq/deepseek-r1-distill-llama-70b`, `groq/llama3-8b-8192`, `groq/llama3-70b-8192`, `groq/mixtral-8x7b-32768`
-- **OpenAI**: `openai/gpt-4o`, `openai/gpt-4o-mini`
-- **Anthropic**: `anthropic/claude-3-5-sonnet-20241022`, `anthropic/claude-3-haiku-20240307`
+The crawler uses Playwright with Chromium browser:
+- Headless mode enabled by default
+- Configurable viewport size (1080x720)
+- Custom user agent
+- SSL verification configurable
 
 ## 📊 Output
 
@@ -220,9 +236,9 @@ productName,productLink
 ```
 
 ### **PDF Downloads**
-PDFs are organized by product name in the `pdfs/` directory:
+PDFs are organized by product name in the `output/` directory:
 ```
-pdfs/
+output/
 ├── IE3 3kW 1000rpm, Al 132S6, 3Ph 50Hz 400V/690V D/Y, IMB5/
 │   ├── catalog.pdf
 │   ├── catalog.pdf_cleaned.pdf
@@ -250,14 +266,6 @@ The system automatically detects pagination patterns by:
 - Identifying domain-specific patterns
 - Supporting JavaScript-based pagination for dynamic sites
 
-### **JavaScript Pagination**
-
-For sites with dynamic pagination, the crawler can:
-- Execute JavaScript to click pagination buttons
-- Extract content from multiple pages
-- Handle infinite scroll or "Load More" functionality
-- Process all pages in a single session
-
 ## 🧹 PDF Processing Features
 
 ### **QR Code Removal**
@@ -272,10 +280,11 @@ For sites with dynamic pagination, the crawler can:
 - Preserves document layout and formatting
 - Configurable padding around removed text
 
-### **Cover Page Addition**
-- Automatically adds custom cover pages to processed PDFs
-- Uses `cover.png` as the template
-- Maintains PDF quality and structure
+### **Automatic Path Detection**
+The system automatically detects:
+- **Tesseract OCR**: Common installation paths on Windows, macOS, and Linux
+- **Poppler**: Common installation paths and PATH environment variable
+- **Fallback mechanisms**: System commands (`where` on Windows, `which` on Unix-like systems)
 
 ## 🔧 Advanced Usage
 
@@ -302,34 +311,6 @@ instruction=(
     "Add your custom extraction requirements here..."
 )
 ```
-
-### **PDF Processing Customization**
-
-The PDF processing now automatically detects Tesseract and Poppler installations across different operating systems. No manual path configuration is required.
-
-If you need to customize the path detection, modify the `find_tesseract_path()` and `find_poppler_path()` functions in `cleaner.py`:
-
-```python
-def find_tesseract_path():
-    # Add your custom paths here
-    custom_paths = [
-        "/path/to/your/tesseract",
-        # Add more paths as needed
-    ]
-    # ... rest of the function
-```
-
-### **Automatic Path Detection**
-
-The system automatically detects:
-- **Tesseract OCR**: Common installation paths on Windows, macOS, and Linux
-- **Poppler**: Common installation paths and PATH environment variable
-- **Fallback mechanisms**: System commands (`where` on Windows, `which` on Unix-like systems)
-
-Supported paths:
-- **Windows**: Program Files, Program Files (x86), User AppData
-- **macOS**: Homebrew, system directories
-- **Linux**: System directories, custom installations
 
 ## 🔍 Troubleshooting
 
@@ -372,13 +353,6 @@ def get_browser_config() -> BrowserConfig:
     )
 ```
 
-### **Performance Optimization**
-
-- **Rate Limiting**: Adjust delays in `main.py` (currently 3-15 seconds)
-- **Session Reuse**: Efficient session handling for better performance
-- **Duplicate Prevention**: Prevents downloading identical PDFs
-- **Graceful Error Handling**: Continues crawling even if individual pages fail
-
 ## 📈 Performance Considerations
 
 ### **Optimizations**
@@ -402,13 +376,17 @@ def get_browser_config() -> BrowserConfig:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License, Version 2.0 - see the LICENSE file for details.
+
+**Important**: Please also read the NOTICE file for additional terms and conditions, including employment-based usage restrictions.
 
 ## 🙏 Acknowledgments
 
 - **Crawl4AI**: For the powerful web crawling framework
 - **Groq**: For the fast LLM inference
 - **DeepSeek**: For the intelligent extraction model
+- **OpenAI**: For GPT models
+- **Anthropic**: For Claude models
 - **OpenCV**: For image processing capabilities
 - **Tesseract**: For OCR functionality
 - **Poppler**: For PDF processing utilities
@@ -429,3 +407,17 @@ If you encounter any issues or have questions:
 - Improved duplicate detection and prevention
 - Better error handling and logging
 - Support for complex URL parameters
+- Multiple interface options (Web, Desktop GUI, CLI)
+- Support for multiple LLM providers
+
+## Terms of Use
+
+While this software is licensed under Apache 2.0, users must also comply with:
+
+- **API Terms**: Respect the terms of service of third-party APIs (Groq, OpenAI, Anthropic, etc.)
+- **Web Crawling Ethics**: Follow robots.txt and website terms of service
+- **Rate Limiting**: Implement appropriate delays to avoid overwhelming servers
+- **Data Privacy**: Comply with applicable data protection regulations
+- **Responsible Use**: Use the software for legitimate purposes only
+- **Employment Restrictions**: See NOTICE file for employment-based usage restrictions
+

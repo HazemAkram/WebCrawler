@@ -18,15 +18,21 @@ from werkzeug.utils import secure_filename
 import tempfile
 import shutil
 from datetime import datetime
+import secrets
 
 # Import the crawling functions
 from main import crawl_from_sites_csv, set_log_callback, log_message
 from config import DEFAULT_CONFIG, ENV_VARS
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
+
+# SECURITY: Generate a random secret key instead of using a hardcoded one
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+
+# SECURITY: Disable debug mode in production
+DEBUG_MODE = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
 
 # Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -255,4 +261,6 @@ def download_output():
     )
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) 
+    # SECURITY: Only bind to localhost (127.0.0.1) instead of 0.0.0.0
+    # This prevents external access from the internet
+    app.run(debug=DEBUG_MODE, host='127.0.0.1', port=5000) 

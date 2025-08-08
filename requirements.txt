@@ -1,5 +1,8 @@
 # ----------------------------------------------------------------  this programe uses python 3.11 ----------------------------------------------------------------
 
+python==3.11
+
+
 # Core web crawling and AI dependencies
 Crawl4AI==0.6.3
 python-dotenv==1.0.1

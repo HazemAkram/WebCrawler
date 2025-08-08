@@ -51,13 +51,14 @@ def log_message(message, level="INFO"):
         print(f"[{level}] {message}")
 
 def read_sites_from_csv(input_file):
+    log_message(f"🔄 Reading sites from CSV: {input_file}", "INFO")
     sites = []
-    with open(input_file, newline='', encoding='utf-8') as csvfile:
+    with open(input_file, encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=',')
         for row in reader:
             sites.append({
                 "url": row["url"],
-                "css_selector": [s.strip() for s in row['css_selector'].split(',') if s.strip()],
+                "css_selector": [s.strip() for s in row['css_selector'].split('|') if s.strip()],
                 "button_selector": row["button_selector"],
             })
     return sites
@@ -106,6 +107,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
             button_selector = site["button_selector"]
             
             log_message(f"--- Crawling site {index+1}/{len(sites)} ---", "INFO")
+            
 
             # Update status for web interface
             if status_callback:
@@ -117,6 +119,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
             parsed = urlparse(url)
             domain_name = parsed.netloc
             log_message(f"Domain: {domain_name}", "INFO")
+            print(f"Domain: {domain_name}")
 
             page_number = get_page_number(url)
             while True:

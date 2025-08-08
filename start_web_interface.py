@@ -18,6 +18,7 @@ import sys
 import subprocess
 import webbrowser
 import time
+import secrets
 
 def check_dependencies():
     """Check if required dependencies are installed"""
@@ -40,6 +41,38 @@ def create_directories():
             os.makedirs(directory)
             print(f"📁 Created directory: {directory}")
 
+def setup_security():
+    """Set up security environment variables"""
+    # Generate a secure secret key if not already set
+    if not os.environ.get('FLASK_SECRET_KEY'):
+        secret_key = secrets.token_hex(32)
+        os.environ['FLASK_SECRET_KEY'] = secret_key
+        print("🔐 Generated secure secret key")
+    
+    # Set debug mode to False for production
+    if not os.environ.get('FLASK_DEBUG'):
+        os.environ['FLASK_DEBUG'] = 'False'
+        print("🛡️ Debug mode disabled for security")
+
+def security_warning():
+    """Display security warning"""
+    print("\n" + "="*60)
+    print("🚨 SECURITY WARNING 🚨")
+    print("="*60)
+    print("This web interface is designed for LOCAL USE ONLY.")
+    print("⚠️  DO NOT expose this to the internet without proper security measures.")
+    print("\n🔒 Current security settings:")
+    print("   • Host: 127.0.0.1 (localhost only)")
+    print("   • Debug mode: Disabled")
+    print("   • Secret key: Auto-generated")
+    print("\n🛡️ For production deployment, consider:")
+    print("   • Adding authentication")
+    print("   • Using HTTPS")
+    print("   • Implementing rate limiting")
+    print("   • Using a reverse proxy (nginx)")
+    print("   • Setting up a firewall")
+    print("="*60)
+
 def main():
     print("🚀 Starting DeepSeek AI Web Crawler Web Interface")
     print("=" * 50)
@@ -51,6 +84,12 @@ def main():
     # Create necessary directories
     create_directories()
     
+    # Set up security
+    setup_security()
+    
+    # Display security warning
+    security_warning()
+    
     # Check if app.py exists
     if not os.path.exists('app.py'):
         print("❌ app.py not found. Please ensure you're in the correct directory.")
@@ -58,7 +97,8 @@ def main():
     
     print("\n🌐 Starting web server...")
     print("📱 The web interface will open automatically in your browser")
-    print("🔗 Manual access: http://localhost:5000")
+    print("🔗 Local access: http://127.0.0.1:5000")
+    print("🔒 External access: BLOCKED (security)")
     print("\n⏹️  Press Ctrl+C to stop the server")
     print("=" * 50)
     
@@ -66,7 +106,7 @@ def main():
     def open_browser():
         time.sleep(2)
         try:
-            webbrowser.open('http://localhost:5000')
+            webbrowser.open('http://127.0.0.1:5000')
         except:
             pass
     

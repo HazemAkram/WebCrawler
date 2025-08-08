@@ -1,4 +1,4 @@
-# DeepSeek AI Web Crawler
+# AI Web Crawler
 
 <a href="https://github.com/unclecode/crawl4ai">
   <img src="https://img.shields.io/badge/Powered%20by-Crawl4AI-blue?style=flat-square" alt="Powered by Crawl4AI"/>
@@ -46,7 +46,7 @@ A powerful, AI-powered web crawler that extracts product information from e-comm
 ## 📁 Project Structure
 
 ```
-deepseek-ai-web-crawler/
+ai-web-crawler/
 ├── main.py                    # Main entry point for the crawler
 ├── app.py                     # Flask web application
 ├── web_crawler_gui.py         # Tkinter desktop GUI

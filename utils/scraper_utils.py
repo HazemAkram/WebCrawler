@@ -45,6 +45,17 @@ from utils.data_utils import is_complete_venue, is_duplicate_venue
 
 load_dotenv()
 
+log_callback = None
+
+def log_message(message, level="INFO"):
+    """Log a message, either to console or web interface"""
+    global log_callback
+    if log_callback:
+        log_callback(message, level)
+    else:
+        print(f"[{level}] {message}")
+
+
 def sanitize_folder_name(product_name: str) -> str:
     """
     Sanitizes a product name to be used as a folder name.
@@ -368,6 +379,7 @@ async def download_pdf_links(
                             # here should we put the script of the cleaning the pdf ? 
                             pdf_processing(search_text_list=search_text, file_path=save_path)
                             print(f"📄 Downloaded PDF: {save_path}")
+                            log_message(f"\t📄 Downloaded PDF: {save_path}", "INFO")
                         else:
                             print(f"❌ Failed to download: {pdf_url} (Status: {resp.status})")
                 except Exception as e:
@@ -747,7 +759,7 @@ async def fetch_and_process_page_with_js(
         let allRowsData = [];
         const rowSelectors = '{", ".join(elements)}';
         const buttonSelector = '{button_selector}';
-        const maxPages = 2;
+        const maxPages = 70;
         let currentPage = 1;
 
 
@@ -819,12 +831,6 @@ async def fetch_and_process_page_with_js(
             )
         )
 
-
-        jsstring = results.js_execution_result
-        filename = "js_execution_result.txt"
-        with open(filename, 'w', encoding='utf-8') as file:
-            file.write(str(jsstring))
-
         js_extracted_content = None
         if hasattr(results, 'js_execution_result') and results.js_execution_result:
             # Try to get the results from the JS execution
@@ -836,7 +842,7 @@ async def fetch_and_process_page_with_js(
             print("No content extracted via JS")
             return [], True
         for items in js_extracted_content:
-            print(f"processing page: {items['page']}, data length: {len(items['data'])}")
+            log_message(f"processing page: {items['page']}, data length: {len(items['data'])}")
             products_string = "".join([item['html'] for item in items['data']])
             session_id = f"js_extraction_session_{items['page']}"
             raw_html_url = f"raw:\n{page_url}<div>\n{products_string}\n</div>"
@@ -852,6 +858,7 @@ async def fetch_and_process_page_with_js(
                 continue
             extracted_content = json.loads(result.extracted_content)
             print(f"Extracted {len(extracted_content)} products from page {items['page']}")
+            log_message(f"Extracted {len(extracted_content)} products from page {items['page']}")
             new_products = 0
             for product in extracted_content:
                 print(f"\tprocessing product: {product}")

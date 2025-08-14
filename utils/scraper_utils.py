@@ -287,6 +287,7 @@ async def download_pdf_links(
         return linkParents;
         """
 
+        product_url = f"{product_url}#documents"
         # Execute JS commands to extract link data
         js_result = await crawler.arun(
             url=product_url,
@@ -631,7 +632,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=False,  # Whether to run in headless mode (no GUI)
+        headless=True,  # Whether to run in headless mode (no GUI)
         viewport_width = 1080,  # Width of the browser viewport
         viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
@@ -733,33 +734,48 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-dis
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
             "You are given HTML content that contains various links and elements from a product page. "
-            "Your task is to identify and extract ONLY English Data Sheet links and Technical Drawing links only if the link is a pdf file.\n\n"
-            "EXTRACTION RULES:\n"
-            "- Data Sheets / Datasheets (preferably in English)\n"
-            "- Technical Drawings / Technical Specifications\n"
-            "- Product Specifications / Product Specs\n"
-            "- Installation Manuals / Operation Manuals\n"
-            "- Maintenance Manuals / Service Manuals\n\n"
-            "❌ EXCLUDE ALL OF THESE:\n"
-            "- Brochures / Flyers / Catalogs\n"
-            "- Certificates / Certifications\n"
-            "- Configurators / Configuration Tools\n"
-            "- Discontinuation Notices / End-of-Life Notices\n"
-            "- CAD Files / 3D Files / Design Files\n"
-            "- User Guides / Quick Start Guides\n"
-            "- Application Notes / White Papers\n"
-            "- Press Releases / News Articles\n\n"
-            "LANGUAGE PRIORITY:\n"
-            "- If multiple Data Sheets exist in different languages, prioritize English\n"
-            "- If no English version exists, select the most relevant non-English version\n"
-            "- For Technical Drawings, language is less important - include if clearly technical\n\n"
-            "QUALITY CHECKS:\n"
-            "- Verify the link is actually downloadable (not just a page link)\n"
-            "- Ensure it's a technical document, not marketing material\n"
-            "- Prefer official technical documentation over promotional content\n\n"
-            "- If the link is not a pdf file, do not include it in the output\n\n"
-            "- ignore duplicate links\n\n"
-            "Output a list of relevant technical document links with their URLs, text content, and document type."
+            "Your Task is toExtract technical PDF documents from the provided HTML content. Focus ONLY on downloadable PDF files that contain technical specifications or data.\n\n"
+            
+            "   REQUIRED FIELDS:\n"
+            "- url: Direct download link to the PDF file\n"
+            "- text: Descriptive text/label of the document\n"
+            "- type: Document category (Data Sheet, Technical Drawing, Manual, etc.)\n"
+            "- language: Document language (English, German, Turkish, etc.)\n"
+            "- priority: High/Medium/Low based on document importance\n\n"
+            
+            "🎯 PRIORITY CLASSIFICATION:\n"
+            "- HIGH: English Data Sheets, Technical Specifications, Product Specs\n"
+            "- MEDIUM: Technical Drawings, Installation Manuals, Non-English Data Sheets\n"
+            "- LOW: Operation Manuals, Maintenance Manuals, Service Manuals\n\n"
+            
+            "✅ INCLUDE:\n"
+            "- Data Sheets / Datasheets (preferably English)\n"
+            "- Technical Drawings with clear technical content\n"
+            "- Product Specifications and Technical Specifications\n"
+            "- Installation and Operation Manuals\n"
+            "- Maintenance and Service Manuals\n\n"
+            
+            "❌ EXCLUDE:\n"
+            "- Brochures, Catalogs, Flyers (marketing materials)\n"
+            "- Certificates and Certifications\n"
+            "- Configurators and Configuration Tools\n"
+            "- CAD files, 3D models, Design files\n"
+            "- User Guides and Quick Start Guides\n"
+            "- Application Notes, White Papers\n"
+            "- Press Releases, News Articles\n"
+            "- Non-PDF file formats\n\n"
+            
+            "   EXTRACTION RULES:\n"
+            "1. If the url is incomplete, complete the url with the domain\n"
+            "2. Only extract links that are direct PDF downloads\n"
+            "3. Verify the link points to a .pdf file or has PDF content\n"
+            "4. Prioritize English versions when multiple languages exist\n"
+            "5. Ignore duplicate links within the same page\n"
+            "6. Ensure the document is technical, not promotional\n"
+            "7. If no suitable documents found, return empty list\n\n"
+            
+            "   OUTPUT FORMAT:\n"
+            "Return a JSON array of technical documents matching the schema. Each document should have all required fields properly populated."
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging

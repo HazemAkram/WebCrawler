@@ -113,7 +113,7 @@ def upload_file():
     
     return jsonify({'error': 'Invalid file type. Please upload a CSV file.'}), 400
 
-def run_crawler_async(csv_filepath, api_key, model):
+def run_crawler_async(csv_filepath, api_key, model, pdf_size_limit=10, skip_large_files=True):
     """Run the crawler in a separate thread"""
     global crawling_status
     
@@ -140,6 +140,12 @@ def run_crawler_async(csv_filepath, api_key, model):
             return crawling_status['stop_requested']
         
         log_message("Starting web crawler...", "INFO")
+        
+        # Set PDF size limit if provided
+        if pdf_size_limit and skip_large_files:
+            from utils.scraper_utils import set_pdf_size_limit
+            set_pdf_size_limit(pdf_size_limit)
+            log_message(f"PDF size limit set to {pdf_size_limit}MB", "INFO")
         
         # Create a new event loop for this thread
         loop = asyncio.new_event_loop()
@@ -178,6 +184,8 @@ def start_crawling():
     csv_filepath = data.get('csv_filepath')
     api_key = data.get('api_key')
     model = data.get('model', DEFAULT_CONFIG['default_model'])
+    pdf_size_limit = data.get('pdf_size_limit', DEFAULT_CONFIG['pdf_settings']['max_file_size_mb'])
+    skip_large_files = data.get('skip_large_files', DEFAULT_CONFIG['pdf_settings']['skip_large_files'])
     
     if not csv_filepath or not os.path.exists(csv_filepath):
         return jsonify({'error': 'Invalid CSV file path'}), 400
@@ -188,7 +196,7 @@ def start_crawling():
     # Start crawling in a separate thread
     thread = threading.Thread(
         target=run_crawler_async,
-        args=(csv_filepath, api_key, model)
+        args=(csv_filepath, api_key, model, pdf_size_limit, skip_large_files)
     )
     thread.daemon = True
     thread.start()

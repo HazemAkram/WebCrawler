@@ -14,6 +14,14 @@ REQUIRED_KEYS = [
     "productLink",
 ]
 
+PDF_KEYS = [
+    "url",
+    "text",
+    "type",
+    "language",
+    "priority",
+]
+
 # Default configuration settings
 DEFAULT_CONFIG = {
     "output_folder": "output",
@@ -33,6 +41,10 @@ DEFAULT_CONFIG = {
         "max_pages": 10,
         "delay_min": 3,
         "delay_max": 15
+    },
+    "pdf_settings": {
+        "max_file_size_mb": 10,  # Maximum PDF file size to download
+        "skip_large_files": True  # Whether to skip files larger than max_file_size_mb
     }
 }
 

@@ -307,6 +307,34 @@ See NOTICE file for additional terms and conditions.
                     </div>
                 </div>
 
+                <!-- PDF Settings Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-file-pdf"></i> PDF Download Settings
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="pdfSizeLimit" class="form-label">Maximum PDF Size (MB)</label>
+                                <input type="number" class="form-control" id="pdfSizeLimit" 
+                                       placeholder="10" min="1" max="100" value="10">
+                                <div class="form-text">
+                                    PDFs larger than this size will be skipped during download
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="skipLargeFiles" class="form-label">Skip Large Files</label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="skipLargeFiles" checked>
+                                    <label class="form-check-label" for="skipLargeFiles">
+                                        Automatically skip files larger than the size limit
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Control Section -->
                 <div class="card">
                     <div class="card-header">
@@ -486,6 +514,8 @@ See NOTICE file for additional terms and conditions.
             }
 
             const model = document.getElementById('modelSelect').value;
+            const pdfSizeLimit = parseInt(document.getElementById('pdfSizeLimit').value) || 10;
+            const skipLargeFiles = document.getElementById('skipLargeFiles').checked;
 
             fetch('/start_crawling', {
                 method: 'POST',
@@ -495,7 +525,9 @@ See NOTICE file for additional terms and conditions.
                 body: JSON.stringify({
                     csv_filepath: uploadedFile.filepath,
                     api_key: apiKey,
-                    model: model
+                    model: model,
+                    pdf_size_limit: pdfSizeLimit,
+                    skip_large_files: skipLargeFiles
                 })
             })
             .then(response => response.json())

@@ -178,7 +178,9 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         output_folder="output",
                         session_id=venue_session_id,
                         regex_strategy=regex_strategy,
-                        domain_name=domain_name
+                        domain_name=domain_name,
+                        api_key=api_key,
+                        model=model
                     )
 
                 all_venues.extend(venues)

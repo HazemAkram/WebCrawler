@@ -18,3 +18,15 @@ class Venue(BaseModel):
 
     productName: str
     productLink: str
+
+
+class PDF(BaseModel):
+    """
+    Represents the data structure of a PDF.
+    """
+
+    url: str
+    text: str
+    type: str
+    language: str
+    priority: str

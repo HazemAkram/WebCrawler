@@ -202,6 +202,9 @@ class WebCrawlerGUI:
         # API Configuration Section
         self.setup_api_section(main_frame)
         
+        # PDF Settings Section
+        self.setup_pdf_section(main_frame)
+        
         # Control Buttons Section
         self.setup_control_section(main_frame)
         
@@ -276,11 +279,40 @@ class WebCrawlerGUI:
         # Bind API key changes to validation
         self.api_key_var.trace('w', self.validate_api_key)
         
+    def setup_pdf_section(self, parent):
+        """Setup PDF download settings section"""
+        # PDF settings frame
+        pdf_frame = ttk.LabelFrame(parent, text="PDF Download Settings", padding="10")
+        pdf_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        pdf_frame.columnconfigure(1, weight=1)
+        
+        # PDF Size Limit
+        ttk.Label(pdf_frame, text="Max PDF Size (MB):").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        
+        self.pdf_size_limit_var = tk.StringVar(value=str(DEFAULT_CONFIG["pdf_settings"]["max_file_size_mb"]))
+        pdf_size_entry = ttk.Entry(pdf_frame, textvariable=self.pdf_size_limit_var, width=10)
+        pdf_size_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, 10))
+        
+        # Skip Large Files Checkbox
+        self.skip_large_files_var = tk.BooleanVar(value=DEFAULT_CONFIG["pdf_settings"]["skip_large_files"])
+        skip_large_check = ttk.Checkbutton(pdf_frame, text="Skip files larger than size limit", 
+                                         variable=self.skip_large_files_var)
+        skip_large_check.grid(row=0, column=2, sticky=tk.W, padx=(20, 0))
+        
+        # Help text
+        help_text = ttk.Label(pdf_frame, text="PDFs larger than this size will be skipped during download", 
+                             foreground="gray")
+        help_text.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        
+        # Bind PDF settings changes to save preferences
+        self.pdf_size_limit_var.trace('w', lambda *args: self.save_user_preferences())
+        self.skip_large_files_var.trace('w', lambda *args: self.save_user_preferences())
+        
     def setup_control_section(self, parent):
         """Setup control buttons section"""
         # Control frame
         control_frame = ttk.Frame(parent)
-        control_frame.grid(row=3, column=0, columnspan=3, pady=(0, 10))
+        control_frame.grid(row=4, column=0, columnspan=3, pady=(0, 10))
         
         # Start button
         self.start_btn = ttk.Button(control_frame, text="Start Crawling", 
@@ -296,7 +328,7 @@ class WebCrawlerGUI:
         """Setup progress tracking section"""
         # Progress frame
         progress_frame = ttk.LabelFrame(parent, text="Crawling Progress", padding="10")
-        progress_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        progress_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         progress_frame.columnconfigure(0, weight=1)
         
         # Progress bar
@@ -331,10 +363,10 @@ class WebCrawlerGUI:
         """Setup log display section"""
         # Log frame
         log_frame = ttk.LabelFrame(parent, text="Crawling Logs", padding="10")
-        log_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        log_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
-        parent.rowconfigure(5, weight=1)
+        parent.rowconfigure(6, weight=1)
         
         # Log text area with better styling
         self.log_text = scrolledtext.ScrolledText(
@@ -531,6 +563,14 @@ class WebCrawlerGUI:
         if self.api_key_var.get():
             os.environ['GROQ_API_KEY'] = self.api_key_var.get()
             
+        # Set PDF size limit
+        pdf_size_limit = int(self.pdf_size_limit_var.get())
+        skip_large_files = self.skip_large_files_var.get()
+        if skip_large_files:
+            from utils.scraper_utils import set_pdf_size_limit
+            set_pdf_size_limit(pdf_size_limit)
+            self.add_log_message(f"📏 PDF size limit set to {pdf_size_limit}MB")
+            
         # Update UI state
         self.crawler_running = True
         self.start_btn.config(state=tk.DISABLED)
@@ -673,7 +713,9 @@ class WebCrawlerGUI:
                 "api_key": self.api_key_var.get(),
                 "model": self.model_var.get(),
                 "csv_file": self.csv_path_var.get(),
-                "output_folder": self.config.get("output_folder", "output")
+                "output_folder": self.config.get("output_folder", "output"),
+                "pdf_size_limit": self.pdf_size_limit_var.get(),
+                "skip_large_files": self.skip_large_files_var.get()
             }
             
             with open("user_preferences.json", "w") as f:
@@ -702,6 +744,12 @@ class WebCrawlerGUI:
                 
                 if preferences.get("output_folder"):
                     self.config["output_folder"] = preferences["output_folder"]
+                
+                if preferences.get("pdf_size_limit"):
+                    self.pdf_size_limit_var.set(preferences["pdf_size_limit"])
+                
+                if preferences.get("skip_large_files") is not None:
+                    self.skip_large_files_var.set(preferences["skip_large_files"])
                     
                 self.add_log_message("✅ User preferences loaded")
                 

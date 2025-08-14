@@ -38,14 +38,38 @@ from crawl4ai import (
     RegexExtractionStrategy,
 )
 
-from models.venue import Venue
+from models.venue import Venue, PDF
 from utils.data_utils import is_complete_venue, is_duplicate_venue
+from config import DEFAULT_CONFIG
 
 
 
 load_dotenv()
 
 log_callback = None
+
+# Get PDF size limit from configuration
+MAX_SIZE_MB = DEFAULT_CONFIG.get("pdf_settings", {}).get("max_file_size_mb", 10)
+
+def set_pdf_size_limit(size_mb: int):
+    """
+    Set the maximum PDF file size limit for downloads.
+    
+    Args:
+        size_mb (int): Maximum file size in megabytes
+    """
+    global MAX_SIZE_MB
+    MAX_SIZE_MB = size_mb
+    log_message(f"PDF size limit set to {MAX_SIZE_MB}MB", "INFO")
+
+def get_pdf_size_limit() -> int:
+    """
+    Get the current maximum PDF file size limit for downloads.
+    
+    Returns:
+        int: Current maximum file size limit in megabytes
+    """
+    return MAX_SIZE_MB
 
 def log_message(message, level="INFO"):
     """Log a message, either to console or web interface"""
@@ -212,10 +236,13 @@ async def download_pdf_links(
         session_id="pdf_download_session", 
         regex_strategy: RegexExtractionStrategy = None , 
         domain_name: str = None,
+        api_key: str = None,
+        model: str = "groq/deepseek-r1-distill-llama-70b"
         ):
     
     """
-    Opens the given product page, searches for any PDF links, and downloads them.
+    Opens the given product page, uses JS_Commands to extract parent elements of <a> tags,
+    then uses LLMExtractionStrategy to identify Data Sheet links, and downloads them.
     Prevents downloading duplicate PDFs by checking existing files.
     Only creates a product folder if PDFs are actually found.
     """
@@ -228,72 +255,126 @@ async def download_pdf_links(
         download_pdf_links.downloaded_pdfs = set()
 
     try:
-
-        response = await crawler.arun(
-        url=product_url,
-        config=CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,  # Do not use cached data
-            extraction_strategy=regex_strategy,  # Strategy for data extraction
-            session_id=session_id,  # Unique session ID for the crawl
-            css_selector= "a",  # Target specific content on the page (we don't use it now but maybe will use it as a tag selector in the future)
-        ),
-    )
+        # Step 1: Use JS_Commands to extract parent elements of <a> tags
+        js_commands = """
+        console.log('[JS] Starting PDF link extraction...');
         
-        extracted_data = response.html
-        # print(extracted_data)
+        // Find all <a> tags and extract their parent elements
+        const allLinks = document.querySelectorAll('a');
+        const linkParents = [];
+        
+        allLinks.forEach((link, index) => {
+            if (link.href && link.href.trim() !== '') {
+                // Get the parent element (could be div, li, td, etc.)
+                const parent = link.parentElement;
+                if (parent) {
+                    // Create a container with the parent element and the link
+                    const container = document.createElement('div');
+                    container.className = 'link-container';
+                    container.appendChild(parent.cloneNode(true));
+                    
+                    linkParents.push({
+                        index: index,
+                        html: container.outerHTML,
+                        originalHref: link.href,
+                        linkText: link.textContent.trim()
+                    });
+                }
+            }
+        });
+        
+        console.log(`[JS] Extracted ${linkParents.length} link parent elements`);
+        return linkParents;
+        """
 
-        html = extracted_data
-        soup = BeautifulSoup(html, "html.parser")
+        # Execute JS commands to extract link data
+        js_result = await crawler.arun(
+            url=product_url,
+            config=CrawlerRunConfig(
+                cache_mode=CacheMode.BYPASS,
+                session_id=f"{session_id}_js_extraction",
+                js_code=js_commands,
+                scan_full_page=True,
+                remove_overlay_elements=True,
+                page_timeout=3000,
+            )
+        )
 
-        # page_content = response.content
+        if not js_result.success or not js_result.js_execution_result:
+            log_message("❌ Failed to execute JS commands for PDF extraction", "ERROR")
+            return
 
-        # Extract all <a> href links
+        # Extract the JS execution results
+        js_extracted_content = js_result.js_execution_result
+        if isinstance(js_extracted_content, dict) and 'results' in js_extracted_content:
+            js_extracted_content = js_extracted_content['results'][0]
+        
+        if not js_extracted_content:
+            log_message("❌ No content extracted via JS", "ERROR")
+            return
+
+
+        log_message(f"🔗 Found {len(js_extracted_content)} links via JS extraction", "INFO")
+
+        # Step 2: Use LLMExtractionStrategy to identify Data Sheet links
+        pdf_llm_strategy = get_pdf_llm_strategy(api_key=api_key, model=model)
+        
+        # Process each link with LLM to identify PDFs
         pdf_links = []
-        seen_pdf_urls_in_page = set()  # Track PDF URLs found on this specific page
+        seen_pdf_urls_in_page = set()
+        raw =f"raw:\n product_url:{product_url}\n"
+        for link_item in js_extracted_content:
+             # Create a raw HTML URL for LLM processing
+            raw += f"{link_item['html']}\n"
 
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            full_url = urljoin(product_url, href)
+        raw_html_url = raw
+
+        try:   
+            # Use LLM to extract PDF information
+            llm_result = await crawler.arun(
+                url=raw_html_url,
+                config=CrawlerRunConfig(
+                    extraction_strategy=pdf_llm_strategy,
+                    session_id=f"{session_id}_llm_extraction_{link_item['index']}",
+                    cache_mode=CacheMode.BYPASS,
+                )
+            )
+
+            extracted_data = json.loads(llm_result.extracted_content)
+
+            if llm_result.success and extracted_data:
+
+                for item in extracted_data: 
+                    pdf_url = item['url']
+                    
+                        # Convert relative URLs to absolute
+                    if not (pdf_url.startswith("https://") or pdf_url.startswith("http://") or pdf_url.startswith("www")):
+                        pdf_url = f"https://{domain_name}{pdf_url}"
+                    
+                    # Check for duplicates within this page
+                    if pdf_url not in seen_pdf_urls_in_page:
+                        pdf_links.append(item)
+                        seen_pdf_urls_in_page.add(pdf_url)
+                       
+                    else: 
+                        log_message(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {pdf_url}", "INFO")
+
+            else: 
+                log_message(f"❌ No content extracted via LLM", "ERROR")
+                return
+                    
             
-            # Enhanced PDF detection - check multiple indicators
-            is_pdf_link = False
+        except Exception as e:
+            log_message(f"⚠️ Error processing links: {e}", "WARNING")
             
-            # 1. Check for .pdf extension
-            if href.lower().endswith(".pdf"):
-                is_pdf_link = True
-            # 2. Check for PDF-related keywords in URL
-            elif any(keyword in href.lower() for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data', 'sheet', 'guide', 'instruction']):
-                is_pdf_link = True
-
-            # 3. Check for PDF-related keywords in link text
-            elif a.get_text().strip():
-                link_text = a.get_text().strip().lower()
-                if any(keyword in link_text for keyword in ['pdf', 'download', 'document', 'manual', 'catalog', 'datasheet', 'brochure', 'specification', 'technical', 'data sheet', 'user guide', 'instruction', 'installation', 'operation']):
-                    is_pdf_link = True
-
-            # 4. Check for common PDF download patterns
-            elif any(pattern in href.lower() for pattern in ['/download', '/file', '/doc', '/attachment', '/media', '/assets', '/files', '/documents']):
-                is_pdf_link = True
-
-            # 5. Check for industrial/manufacturing specific patterns
-            elif any(pattern in href.lower() for pattern in ['/technical', '/specs', '/specifications', '/data', '/info', '/details']):
-                is_pdf_link = True
-            
-            if is_pdf_link:
-                # Check for duplicates within this page
-                if full_url not in seen_pdf_urls_in_page:
-                    pdf_links.append(full_url)
-                    seen_pdf_urls_in_page.add(full_url)
-                else:
-                    print(f"⏭️ Skipping duplicate PDF URL found on same page: {os.path.basename(urlparse(full_url).path)}")
 
         # Check if any PDFs were found
         if not pdf_links:
-            print(f"📭 No PDFs found on page for product: {product_name}")
-            print(f"🔗 Product URL: {product_url}")
+            log_message(f"📭 No PDFs found on page for product: {product_name}", "INFO")
+            log_message(f"🔗 Product URL: {product_url}", "INFO")
             return  # Exit early without creating any folders
 
-        print(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}")
+        log_message(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}", "INFO")
 
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
@@ -303,9 +384,21 @@ async def download_pdf_links(
             os.makedirs(productPath)
 
 
+        # Sort PDFs by priority: High (English Data Sheets) > Medium (Technical Drawings) > Low (Non-English Data Sheets)
+        pdf_links.sort(key=lambda x: {'High': 3, 'Medium': 2, 'Low': 1}.get(x.get('priority', 'Unknown'), 0), reverse=True)
+        
+        log_message(f"📊 Processing {len(pdf_links)} technical documents by priority", "INFO")
+        
         # Download each PDF with duplicate checking (SSL verification disabled)
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-            for pdf_url in pdf_links:
+            for pdf_info in pdf_links:
+                pdf_url = pdf_info['url']
+                pdf_text = pdf_info['text']
+                pdf_type = pdf_info['type']
+                pdf_language = pdf_info.get('language', 'Unknown')
+                pdf_priority = pdf_info.get('priority', 'Unknown')
+                priority_emoji = "🔴" if pdf_priority == 'High' else "🟡" if pdf_priority == 'Medium' else "🟢"
+                log_message(f"{priority_emoji} Processing {pdf_type} ({pdf_language}) - {pdf_text}", "READING")
                 # Enhanced filename generation for extensionless URLs
                 filename = generate_pdf_filename(pdf_url, product_name)
                 save_path = os.path.join(productPath, filename)
@@ -324,6 +417,14 @@ async def download_pdf_links(
                 try:
                     async with session.get(pdf_url) as resp:
                         if resp.status == 200:
+                            # Check file size before downloading
+                            content_length = resp.headers.get('content-length')
+                            if content_length:
+                                file_size_mb = int(content_length) / (1024 * 1024)
+                                if file_size_mb > MAX_SIZE_MB:
+                                    log_message(f"⚠️ Skipping PDF larger than {MAX_SIZE_MB}MB: {pdf_url} (Size: {file_size_mb:.2f}MB)", "INFO")
+                                    continue
+                            
                             # Validate content type for PDF files
                             content_type = resp.headers.get('content-type', '').lower()
                             is_pdf_content = (
@@ -336,11 +437,17 @@ async def download_pdf_links(
                             # Read the content to check for duplicates
                             content = await resp.read()
                             
+                            # Check file size after reading content (fallback for servers that don't provide content-length)
+                            content_size_mb = len(content) / (1024 * 1024)
+                            if content_size_mb > MAX_SIZE_MB:
+                                log_message(f"⚠️ Skipping PDF larger than {MAX_SIZE_MB}MB: {pdf_url} (Size: {content_size_mb:.2f}MB)", "INFO")
+                                continue
+                            
                             # Additional validation: check if content starts with PDF magic bytes
                             if not is_pdf_content and len(content) >= 4:
                                 pdf_magic_bytes = b'%PDF'
                                 if not content.startswith(pdf_magic_bytes):
-                                    print(f"⚠️ Skipping non-PDF content from {pdf_url} (Content-Type: {content_type})")
+                                    log_message(f"⚠️ Skipping non-PDF content from {pdf_url} (Content-Type: {content_type})", "INFO")
                                     continue
                             
                             # Check if content is identical to any existing PDF
@@ -378,15 +485,14 @@ async def download_pdf_links(
                                 ]
                             # here should we put the script of the cleaning the pdf ? 
                             pdf_processing(search_text_list=search_text, file_path=save_path)
-                            print(f"📄 Downloaded PDF: {save_path}")
-                            log_message(f"\t📄 Downloaded PDF: {save_path}", "INFO")
+                            log_message(f"\t✅ Downloaded {pdf_type} ({pdf_language}): {save_path}", "INFO")
                         else:
-                            print(f"❌ Failed to download: {pdf_url} (Status: {resp.status})")
+                            log_message(f"❌ Failed to download: {pdf_url} (Status: {resp.status})", "INFO")
                 except Exception as e:
-                    print(f"❌ Error downloading {pdf_url}: {e}")
+                    log_message(f"❌ Error downloading {pdf_url}\t: { e}", "ERROR")
 
     except Exception as e:
-        print(f"⚠️ Error During processing  {product_url} pdf : {e}")
+        log_message(f"⚠️ Error During processing  {product_url} pdf : {e}", "ERROR")
 
 def get_page_number(base_url: str): 
     
@@ -413,11 +519,11 @@ def get_page_number(base_url: str):
     except Exception as e: 
         
         if str(e) == "''": 
-            print(f"⚠️ Error During Extracting Page Number URL IS NOT PAGINTABLE ")
+            log_message(f"⚠️ Error During Extracting Page Number URL IS NOT PAGINTABLE ", "INFO")
             return None
         
         else : 
-            print(f"⚠️ Error During Extracting Page Number : {e}")
+            log_message(f"⚠️ Error During Extracting Page Number : {e}", "INFO")
             return None
 
 
@@ -505,10 +611,10 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
     except Exception as e :
 
         if str(e)  == "''": 
-            print(f"⚠️ Error During Appending page parameter URL IS NOT PAGINTABLE")
+            log_message(f"⚠️ Error During Appending page parameter URL IS NOT PAGINTABLE", "INFO")
             return base_url
         else: 
-            print(f"⚠️ Error during Append Page Parameter : {e}")
+            log_message(f"⚠️ Error during Append Page Parameter : {e}", "INFO")
             return base_url
 
 
@@ -525,7 +631,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_width = 1080,  # Width of the browser viewport
         viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
@@ -599,6 +705,67 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill
     )
 
 
+def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
+    """
+    Returns the configuration for the PDF extraction strategy using LLM.
+    
+    Args:
+        api_key (str): The API key for the LLM provider. If None, will try to get from environment.
+        model (str): The LLM model to use. Defaults to "groq/deepseek-r1-distill-llama-70b".
+    
+    Returns:
+        LLMExtractionStrategy: The settings for how to extract PDF links using LLM.
+    """
+    # Use provided API key or fall back to environment variable
+    if api_key is None:
+        api_key = os.getenv('GROQ_API_KEY')
+    
+    if not api_key:
+        raise ValueError("API key is required. Please provide an API key or set GROQ_API_KEY environment variable.")
+    
+    # https://docs.crawl4ai.com/api/strategies/#llmextractionstrategy
+    return LLMExtractionStrategy(
+        llm_config=LLMConfig(
+            provider = model, # LLM model to use
+            api_token= api_key,  # API token for the LLM provider    
+        ),
+        schema=PDF.model_json_schema(),
+        extraction_type="schema",  # Type of extraction to perform
+        instruction=(
+            "You are given HTML content that contains various links and elements from a product page. "
+            "Your task is to identify and extract ONLY English Data Sheet links and Technical Drawing links only if the link is a pdf file.\n\n"
+            "EXTRACTION RULES:\n"
+            "- Data Sheets / Datasheets (preferably in English)\n"
+            "- Technical Drawings / Technical Specifications\n"
+            "- Product Specifications / Product Specs\n"
+            "- Installation Manuals / Operation Manuals\n"
+            "- Maintenance Manuals / Service Manuals\n\n"
+            "❌ EXCLUDE ALL OF THESE:\n"
+            "- Brochures / Flyers / Catalogs\n"
+            "- Certificates / Certifications\n"
+            "- Configurators / Configuration Tools\n"
+            "- Discontinuation Notices / End-of-Life Notices\n"
+            "- CAD Files / 3D Files / Design Files\n"
+            "- User Guides / Quick Start Guides\n"
+            "- Application Notes / White Papers\n"
+            "- Press Releases / News Articles\n\n"
+            "LANGUAGE PRIORITY:\n"
+            "- If multiple Data Sheets exist in different languages, prioritize English\n"
+            "- If no English version exists, select the most relevant non-English version\n"
+            "- For Technical Drawings, language is less important - include if clearly technical\n\n"
+            "QUALITY CHECKS:\n"
+            "- Verify the link is actually downloadable (not just a page link)\n"
+            "- Ensure it's a technical document, not marketing material\n"
+            "- Prefer official technical documentation over promotional content\n\n"
+            "- If the link is not a pdf file, do not include it in the output\n\n"
+            "- ignore duplicate links\n\n"
+            "Output a list of relevant technical document links with their URLs, text content, and document type."
+        ),
+        input_format="markdown",  # Format of the input content
+        verbose=False,  # Enable verbose logging
+    )
+
+
 async def check_no_results(
     crawler: AsyncWebCrawler,
     css_selector: str,
@@ -630,7 +797,7 @@ async def check_no_results(
         if "No Results Found" in result.cleaned_html:
             return True
     else:
-        print(
+        log_message(
             f"Error fetching page for 'No Results Found' check: {result.error_message}"
         )
 
@@ -666,7 +833,7 @@ async def fetch_and_process_page(
     """
 
     # Debugging: Print the URL being fetched
-    print(f"Fetching page {page_number} from URL: {url}")    
+    log_message(f"🔄 Crawling page {page_number} from URL: {url}", "INFO")    
 
 
     # Check if "No Results Found" message is present
@@ -678,7 +845,7 @@ async def fetch_and_process_page(
     )
 
     if no_results:
-        print(f"------------------------------------------------------------------------- 🏁 No results found on page {page_number}. Stopping pagination. from the first run !! -------------------------------------------------------------------------"    )
+        log_message(f"------------------------------------------------------------------------- 🏁 No results found on page {page_number}. Stopping pagination. from the first run !! -------------------------------------------------------------------------"    )
         return [], True  # No more results, signal to stop crawling
 
     # Fetch page content with the extraction strategy
@@ -698,21 +865,21 @@ async def fetch_and_process_page(
     )
 
     if not (result.success and result.extracted_content):
-        print(f"Error fetching page {page_number}: {result.error_message}")
+        log_message(f"Error fetching page {page_number}: {result.error_message}", "INFO")
         return [], False
 
     # Parse extracted content
     extracted_data = json.loads(result.extracted_content)
-    print(type(extracted_data))
+    log_message(f"Type of extracted data: {type(extracted_data)}", "INFO")
     if not extracted_data:
-        print(f"No products found on page {page_number}.")
+        log_message(f"No products found on page {page_number}.", "INFO")
         return [], False
 
     # Process product
     complete_venues = []
     for venue in extracted_data:
         # Debugging: Print each venue to understand its structure
-        print("Processing venue:", venue)
+        log_message(f"{venue}", "PROCESSING")
 
         # Ignore the 'error' key if it's False
         if venue.get("error") is False:
@@ -722,7 +889,7 @@ async def fetch_and_process_page(
             continue  # Skip incomplete venues
 
         if is_duplicate_venue(venue["productName"], seen_names):
-            print(f"Duplicate venue '{venue['productName']}' found. Skipping.")
+            log_message(f"Duplicate venue '{venue['productName']}' found. Skipping.", "INFO")
             continue  # Skip duplicate venues
 
         # Add venue to the list
@@ -734,10 +901,10 @@ async def fetch_and_process_page(
             complete_venues.append(venue)
 
     if not complete_venues:
-        print(f"No complete venues found on page {page_number}.")
+        log_message(f"No complete venues found on page {page_number}.", "INFO")
         return [], False
 
-    print(f"Extracted {len(complete_venues)} venues from page {page_number}.")
+    log_message(f"Extracted {len(complete_venues)} venues from page {page_number}.", "INFO")
 
     return complete_venues, False  # Continue crawling
 
@@ -759,7 +926,7 @@ async def fetch_and_process_page_with_js(
         let allRowsData = [];
         const rowSelectors = '{", ".join(elements)}';
         const buttonSelector = '{button_selector}';
-        const maxPages = 70;
+        const maxPages = 7;
         let currentPage = 1;
 
 
@@ -782,6 +949,7 @@ async def fetch_and_process_page_with_js(
         }});
         console.log(`[JS] Extracted initial page with ${{allRowsData[0].data.length}} rows`);
 
+        await new Promise(r => setTimeout(r, 5000));
         // Only attempt pagination if valid button selector exists
         if (buttonSelector && buttonSelector.trim() !== '') {{
             console.log('[JS] Pagination detected. Starting automatic pagination...');
@@ -839,7 +1007,7 @@ async def fetch_and_process_page_with_js(
             else:
                 js_extracted_content = results.js_execution_result
         if not js_extracted_content:
-            print("No content extracted via JS")
+            log_message("No content extracted via JS", "INFO")
             return [], True
         for items in js_extracted_content:
             log_message(f"processing page: {items['page']}, data length: {len(items['data'])}")
@@ -854,31 +1022,30 @@ async def fetch_and_process_page_with_js(
                 )
             )
             if not result.extracted_content:
-                print(f"\tNo content extracted for page {items['page']}")
+                log_message(f"\tNo content extracted for page {items['page']}", "INFO")
                 continue
             extracted_content = json.loads(result.extracted_content)
-            print(f"Extracted {len(extracted_content)} products from page {items['page']}")
-            log_message(f"Extracted {len(extracted_content)} products from page {items['page']}")
+            log_message(f"Extracted {len(extracted_content)} products from page {items['page']}", "INFO")
             new_products = 0
             for product in extracted_content:
-                print(f"\tprocessing product: {product}")
+                log_message(f"\tprocessing product: {product}", "INFO")
                 if product.get("error") is False:
                     product.pop("error", None)
                 if not is_complete_venue(product, required_keys):
                     continue
                 if is_duplicate_venue(product["productName"], seen_names):
-                    print(f"\tDuplicate: {product['productName']}")
+                    log_message(f"\tDuplicate: {product['productName']}", "INFO")
                     continue
                 if "productLink" in product:
                     product["productLink"] = product["productLink"].replace("/en/en/", "/en/")
                 seen_names.add(product["productName"])
                 complete_venues.append(product)
                 new_products += 1
-            print(f"\tAdded {new_products} unique products")
+            log_message(f"\tAdded {new_products} unique products", "INFO")
         if not complete_venues:
-            print("\tNo product to scrape")
+            log_message("\tNo product to scrape", "INFO")
             return [], True
         return complete_venues, False
     except Exception as e:
-        print(f"Error during JS-based crawling: {str(e)}")
+        log_message(f"Error during JS-based crawling: {str(e)}", "INFO")
         return [], True

@@ -18,14 +18,13 @@ import aiohttp
 
 from typing import List, Set, Tuple
 from fake_useragent import UserAgent
-from bs4 import BeautifulSoup
 
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import re
 
+# AI-powered PDF processing is now handled automatically in cleaner.py
 from cleaner import pdf_processing
-
 from dotenv import load_dotenv
 
 from crawl4ai import (
@@ -475,23 +474,14 @@ async def download_pdf_links(
                             download_pdf_links.downloaded_pdfs.add(pdf_url)
 
 
-                            search_text = [
-                                # English     Türk     German
-                                'Address', 'Adres', 'Adresse', 
-                                'Telephone', 'Telefon',
-                                'Fax', 'Faks', 
-                                'Email', 'e-posta','e-mail', 'eposta',
-                                domain_name, f"www.{domain_name}"
-                                #product_name.lower()  # Also include product name for removal
-                                ]
-                            # here should we put the script of the cleaning the pdf ? 
-                            pdf_processing(search_text_list=search_text, file_path=save_path)
+                            # AI-powered PDF cleaning - no manual search text needed
+                            pdf_processing(file_path=save_path)
                             log_message(f"\t✅ Downloaded {pdf_type} ({pdf_language}): {save_path}", "INFO")
                         else:
                             log_message(f"❌ Failed to download: {pdf_url} (Status: {resp.status})", "INFO")
                 except Exception as e:
                     log_message(f"❌ Error downloading {pdf_url}\t: { e}", "ERROR")
-
+            pdf_llm_strategy.show_usage()
     except Exception as e:
         log_message(f"⚠️ Error During processing  {product_url} pdf : {e}", "ERROR")
 

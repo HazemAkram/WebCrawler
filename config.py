@@ -22,6 +22,13 @@ PDF_KEYS = [
     "priority",
 ]
 
+TEXT_REMOVE_KEYS = [
+    "text_to_remove",
+    "reason",
+    "confidence",
+]
+
+
 # Default configuration settings
 DEFAULT_CONFIG = {
     "output_folder": "output",
@@ -43,7 +50,7 @@ DEFAULT_CONFIG = {
         "delay_max": 15
     },
     "pdf_settings": {
-        "max_file_size_mb": 10,  # Maximum PDF file size to download
+        "max_file_size_mb": 25,  # Maximum PDF file size to download
         "skip_large_files": True  # Whether to skip files larger than max_file_size_mb
     }
 }

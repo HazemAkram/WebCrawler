@@ -15,17 +15,150 @@ from PIL import Image
 import pytesseract
 from pyzbar.pyzbar import decode
 from pdf2image import convert_from_path
-from fuzzywuzzy import fuzz  # For fuzzy text matching
 import os
 import platform
 import subprocess
 import shutil
+import groq
+from typing import List, Dict, Any
+import json
+from models.venue import TextRemove
 
 # Configuration constants
-TEXT_MATCH_THRESHOLD = 80    # Fuzzy match threshold (0-100)
 QR_PADDING = 10              # Padding around QR codes
 BG_SAMPLE_MARGIN = 40        # Background estimation margin
 RESCALE_FACTOR = 2           # QR enhancement scale factor
+
+# Groq API configuration
+GROQ_MODEL = "openai/gpt-oss-120b"  # Default model for text analysis
+
+def get_groq_client():
+    """
+    Initialize and return Groq client using API key from environment.
+    Returns the client or None if API key is not available.
+    """
+    api_key = os.getenv('GROQ_API_KEY')
+    if not api_key:
+        print("⚠️ GROQ_API_KEY not found in environment variables")
+        print("   Please set GROQ_API_KEY environment variable to use AI-powered text removal")
+        return None
+    
+    try:
+        client = groq.Groq(api_key=api_key)
+        return client
+    except Exception as e:
+        print(f"❌ Error initializing Groq client: {str(e)}")
+        return None
+
+def analyze_text_with_ai(text_content: str, groq_client) -> List[Dict[str, Any]]:
+    """
+    Use Groq API to analyze text and identify contact information that should be removed.
+    
+    Args:
+        text_content (str): The text content to analyze
+        groq_client: Initialized Groq client
+        
+    Returns:
+        List[Dict[str, Any]]: List of text regions to remove with coordinates and content
+    """
+    if not groq_client:
+        return []
+    
+    prompt = f"""
+You are an AI assistant specialized in identifying contact information and sensitive data in documents that should be removed for privacy and security purposes.
+
+Analyze the following text and identify ALL instances of contact information that should be removed:
+
+**CONTACT INFORMATION TO REMOVE:**
+- Website URLs and domain names
+- Physical addresses (full or partial)
+- Phone numbers (including international formats)
+- Fax numbers
+- Email addresses
+- Social media handles
+- Contact person names with titles
+- Company contact details
+- Office locations and building information
+- Postal codes and city information
+- Any other identifying contact information
+
+**TEXT TO ANALYZE:**
+{text_content}
+
+**INSTRUCTIONS:**
+1. Identify each piece of contact information
+2. Provide the exact text that should be removed
+3. Include surrounding context if needed for accurate removal
+4. Be thorough - don't miss any contact details
+5. Focus on privacy and security concerns
+
+**OUTPUT FORMAT:**
+Return a JSON array containing objects with these fields:
+- text_to_remove: The exact text to remove
+- reason: Why this text should be removed
+- confidence: Your confidence level (high/medium/low)
+
+IMPORTANT: Return ONLY valid JSON array, no markdown formatting or additional text.
+
+Example output format:
+[
+  {{
+    "text_to_remove": "John Doe",
+    "reason": "Contact person name",
+    "confidence": "high"
+  }},
+  {{
+    "text_to_remove": "john@example.com",
+    "reason": "Email address",
+    "confidence": "high"
+  }}
+]
+"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an AI assistant that identifies contact information to remove from documents. Always return a valid JSON array containing objects with text_to_remove, reason, and confidence fields. Return ONLY the JSON array, no additional text or formatting."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.1,  # Low temperature for consistent results
+        )
+        
+        # Extract the response content
+        ai_response = response.choices[0].message.content.strip()
+        
+        # Try to parse the JSON response
+        try:
+            # Remove any markdown formatting if present
+            if ai_response.startswith("```json"):
+                ai_response = ai_response[7:]
+            if ai_response.endswith("```"):
+                ai_response = ai_response[:-3]
+            
+            ai_response = ai_response.strip()
+            analysis_result = json.loads(ai_response)
+            
+            if isinstance(analysis_result, list):
+                return analysis_result
+            else:
+                print(f"⚠️ Unexpected AI response format: {type(analysis_result)}")
+                return []
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ Error parsing AI response as JSON: {str(e)}")
+            print(f"AI Response: {ai_response}")
+            return []
+            
+    except Exception as e:
+        print(f"❌ Error calling Groq API: {str(e)}")
+        return []
 
 def find_tesseract_path():
     """
@@ -245,26 +378,76 @@ def remove_region(img, bbox, padding=0):
     avg_color = estimate_background_color(img, (x, y, w, h))
     cv2.rectangle(img, (x, y), (x + w, y + h), avg_color, -1)
 
-def replace_text_in_scanned_pdf(search_text_list, images):
-    """Removes matching text using fuzzy matching and background filling"""
+def replace_text_in_scanned_pdf_ai(images):
+    """
+    Automatically removes contact information using AI analysis instead of manual search text.
+    Uses Groq API to identify what should be removed.
+    """
     modified_images = []
+    groq_client = get_groq_client()
+    
+    if not groq_client:
+        print("⚠️ Cannot perform AI-powered text removal without Groq API key")
+        print("   Returning original images unchanged")
+        return images
     
     for page_num, img in enumerate(images, 1):
+        print(f"🤖 Processing page {page_num} with AI...")
+        
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        
+        # Extract all text from the page
         data = pytesseract.image_to_data(img_cv, output_type=pytesseract.Output.DICT)
         
+        # Combine all text into a single string for AI analysis
+        all_text = " ".join([text.strip() for text in data["text"] if text.strip()])
+        
+        if not all_text:
+            print(f"   Page {page_num}: No text found")
+            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
+            continue
+        
+        # Use AI to analyze the text and identify what should be removed
+        ai_analysis = analyze_text_with_ai(all_text, groq_client)
+        
+        if not ai_analysis:
+            print(f"   Page {page_num}: AI analysis returned no results")
+            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
+            continue
+        
+        print(f"   Page {page_num}: AI identified {len(ai_analysis)} items to remove")
+        
+        # Process each text item to find matches with AI-identified content
+        removed_count = 0
         for i, text in enumerate(data["text"]):
             text_lower = text.strip().lower()
-            # Check against all search terms in the list
-            for search_text in search_text_list:
-                search_lower = search_text.lower()
-                if fuzz.ratio(text_lower, search_lower) >= TEXT_MATCH_THRESHOLD:
+            if not text_lower:
+                continue
+            if text == "www.omegamotor.com.tr":
+                print(text)
+            # Check if this text should be removed based on AI analysis
+            for ai_item in ai_analysis:
+                text_to_remove = ai_item.get("text_to_remove", "").lower()
+                reason = ai_item.get("reason", "unknown")
+                confidence = ai_item.get("confidence", "low")
+                
+                # Check if the current text contains or matches the AI-identified text
+                if (text_to_remove in text_lower or 
+                    text_lower in text_to_remove or 
+                    text_lower == text_to_remove):
+                    
+                    # Get the bounding box for this text
                     bbox = (data["left"][i], data["top"][i], 
                             data["width"][i], data["height"][i])
+                    
+                    # Remove the text region
                     remove_region(img_cv, bbox, padding=QR_PADDING)
-                    print(f"Removed text at page {page_num}: {text.strip()} (matched: {search_text})")
+                    
+                    print(f"      🗑️ Removed: '{text.strip()}' (Reason: {reason}, Confidence: {confidence})")
+                    removed_count += 1
                     break  # Remove this text and move to next text item
-
+        
+        print(f"   Page {page_num}: Removed {removed_count} text regions")
         modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
     
     return modified_images
@@ -335,8 +518,11 @@ def remove_qr_codes_from_pdf(images):
 
 
 
-def pdf_processing(search_text_list: list, file_path: str):
-    """Main processing pipeline: Text removal -> QR removal -> Save PDF"""
+def pdf_processing(file_path: str):
+    """
+    Main processing pipeline: AI-powered text removal -> QR removal -> Save PDF
+    No longer requires search_text_list parameter - fully automated with AI.
+    """
     # Setup dependencies
     tesseract_path, poppler_path = setup_dependencies()
     if not tesseract_path:
@@ -361,7 +547,10 @@ def pdf_processing(search_text_list: list, file_path: str):
     
     # Processing pipeline
     try:
-        text_removed = replace_text_in_scanned_pdf(search_text_list, pdf_images)
+        print("🤖 Starting AI-powered text removal...")
+        text_removed = replace_text_in_scanned_pdf_ai(pdf_images)
+        
+        print("🔍 Starting QR code removal...")
         final_images = remove_qr_codes_from_pdf(text_removed)
         
         # Add cover page with smart resizing
@@ -394,7 +583,7 @@ def pdf_processing(search_text_list: list, file_path: str):
         # Check if original PDF has more than 3 pages and conditionally remove last page
         original_pdf_size = len(pdf_images)
         if original_pdf_size > 3:
-            final_images = final_images[:-1]  
+            final_images = final_images  
         # Save final PDF
         final_path = f"{file_path}"
         final_images[0].save(final_path, format='PDF', save_all=True, 

@@ -30,3 +30,13 @@ class PDF(BaseModel):
     type: str
     language: str
     priority: str
+
+
+class TextRemove(BaseModel):
+    """
+    Represents the data structure of a TextRemove.
+    """
+
+    text_to_remove: str
+    reason: str
+    confidence: str

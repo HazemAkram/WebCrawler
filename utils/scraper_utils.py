@@ -11,12 +11,13 @@ See NOTICE file for additional terms and conditions.
 import json
 import os
 import hashlib
+import traceback
 
 
 import aiofiles
 import aiohttp
 
-from typing import List, Set, Tuple
+from typing import List, Set, Tuple, Dict, Any
 from fake_useragent import UserAgent
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -226,6 +227,129 @@ def sanitize_filename(filename: str) -> str:
     return sanitized
 
 
+def filter_pdf_links(link_items: List[dict], domain_name: str = None) -> List[dict]:
+    """
+    Filter link items to identify potential PDF links before sending to LLM.
+    This reduces the message length and improves LLM processing efficiency.
+    
+    Args:
+        link_items (List[dict]): List of link items from JS extraction
+        domain_name (str): Domain name for URL completion
+        
+    Returns:
+        List[dict]: Filtered list of potential PDF links
+    """
+    if not link_items:
+        return []
+    
+    # PDF-related keywords and patterns
+    pdf_keywords = {
+        'url_keywords': [
+            'pdf', 'datasheet', 'data-sheet', 'data_sheet', 'datasheet', 'technical', 'spec', 'specification',
+            'manual', 'guide', 'documentation', 'catalog', 'brochure', 'drawing', 'diagram', 'scheme',
+            'certificate', 'certification', 'test', 'report', 'analysis', 'study', 'white-paper',
+            'application-note', 'app-note', 'installation', 'operation', 'maintenance', 'service',
+            'user-guide', 'quick-start', 'reference', 'handbook', 'instruction', 'procedure'
+        ],
+        'text_keywords': [
+            'pdf', 'datasheet', 'data sheet', 'technical', 'specification', 'manual', 'guide',
+            'documentation', 'catalog', 'brochure', 'drawing', 'diagram', 'certificate', 'test',
+            'report', 'analysis', 'study', 'white paper', 'application note', 'installation',
+            'operation', 'maintenance', 'service', 'user guide', 'quick start', 'reference',
+            'handbook', 'instruction', 'procedure', 'download', 'view', 'open', 'read'
+        ]
+    }
+    
+    # Industrial/manufacturing specific patterns
+    industrial_patterns = [
+        r'datasheet|data[-_]sheet|technical[-_]spec|product[-_]spec',
+        r'installation[-_]manual|operation[-_]manual|maintenance[-_]manual',
+        r'user[-_]guide|quick[-_]start|reference[-_]manual',
+        r'certificate|certification|test[-_]report|analysis[-_]report',
+        r'drawing|diagram|scheme|technical[-_]drawing',
+        r'application[-_]note|app[-_]note|white[-_]paper',
+        r'product[-_]catalog|technical[-_]catalog|brochure',
+        r'installation[-_]guide|setup[-_]guide|configuration[-_]guide',
+        r'operation[-_]guide|maintenance[-_]guide|service[-_]guide',
+        r'technical[-_]documentation|product[-_]documentation'
+    ]
+    
+    # Common PDF/datasheet patterns
+    pdf_patterns = [
+        r'\.pdf$',  # Direct PDF extension
+        r'pdf[_-]',  # PDF with underscore or hyphen
+        r'datasheet[_-]',  # Datasheet with underscore or hyphen
+        r'technical[_-]',  # Technical with underscore or hyphen
+        r'spec[_-]',  # Spec with underscore or hyphen
+        r'manual[_-]',  # Manual with underscore or hyphen
+        r'guide[_-]',  # Guide with underscore or hyphen
+        r'document[_-]',  # Document with underscore or hyphen
+        r'catalog[_-]',  # Catalog with underscore or hyphen
+        r'brochure[_-]',  # Brochure with underscore or hyphen
+        r'drawing[_-]',  # Drawing with underscore or hyphen
+        r'diagram[_-]',  # Diagram with underscore or hyphen
+        r'certificate[_-]',  # Certificate with underscore or hyphen
+        r'test[_-]',  # Test with underscore or hyphen
+        r'report[_-]',  # Report with underscore or hyphen
+        r'analysis[_-]',  # Analysis with underscore or hyphen
+        r'study[_-]',  # Study with underscore or hyphen
+        r'white[_-]paper[_-]',  # White paper with underscore or hyphen
+        r'application[_-]note[_-]',  # Application note with underscore or hyphen
+        r'installation[_-]',  # Installation with underscore or hyphen
+        r'operation[_-]',  # Operation with underscore or hyphen
+        r'maintenance[_-]',  # Maintenance with underscore or hyphen
+        r'service[_-]',  # Service with underscore or hyphen
+        r'user[_-]guide[_-]',  # User guide with underscore or hyphen
+        r'quick[_-]start[_-]',  # Quick start with underscore or hyphen
+        r'reference[_-]',  # Reference with underscore or hyphen
+        r'handbook[_-]',  # Handbook with underscore or hyphen
+        r'instruction[_-]',  # Instruction with underscore or hyphen
+        r'procedure[_-]'  # Procedure with underscore or hyphen
+    ]
+    
+    filtered_links = []
+    
+    for link_item in link_items:
+        original_href = link_item.get('originalHref', '').lower()
+        link_text = link_item.get('linkText', '').lower()
+        
+        # Skip empty or invalid links
+        if not original_href or original_href == '#' or original_href == 'javascript:void(0)':
+            continue
+        
+        # 1. Check for .pdf extension
+        if original_href.endswith('.pdf'):
+            filtered_links.append(link_item)
+            continue
+        
+        # 2. Check for PDF-related keywords in URL
+        url_contains_pdf_keyword = any(keyword in original_href for keyword in pdf_keywords['url_keywords'])
+        if url_contains_pdf_keyword:
+            filtered_links.append(link_item)
+            continue
+        
+        # 3. Check for PDF-related keywords in link text
+        text_contains_pdf_keyword = any(keyword in link_text for keyword in pdf_keywords['text_keywords'])
+        if text_contains_pdf_keyword:
+            filtered_links.append(link_item)
+            continue
+        
+        # 4. Check for common PDF/datasheet patterns
+        for pattern in pdf_patterns:
+            if re.search(pattern, original_href, re.IGNORECASE):
+                filtered_links.append(link_item)
+                break
+        else:
+            # 5. Check for industrial/manufacturing specific patterns
+            for pattern in industrial_patterns:
+                if re.search(pattern, original_href, re.IGNORECASE) or re.search(pattern, link_text, re.IGNORECASE):
+                    filtered_links.append(link_item)
+                    break
+    
+    log_message(f"🔍 Filtered {len(link_items)} links down to {len(filtered_links)} potential PDF links", "INFO")
+    return filtered_links
+
+
 # https://www.ors.com.tr/en/tek-sirali-sabit-bilyali-rulmanlar
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
@@ -241,6 +365,7 @@ async def download_pdf_links(
     
     """
     Opens the given product page, uses JS_Commands to extract parent elements of <a> tags,
+    filters the links to identify potential PDFs using comprehensive pattern matching,
     then uses LLMExtractionStrategy to identify Data Sheet links, and downloads them.
     Prevents downloading duplicate PDFs by checking existing files.
     Only creates a product folder if PDFs are actually found.
@@ -316,15 +441,24 @@ async def download_pdf_links(
 
         log_message(f"🔗 Found {len(js_extracted_content)} links via JS extraction", "INFO")
 
-        # Step 2: Use LLMExtractionStrategy to identify Data Sheet links
+        # Step 2: Filter links to reduce message length before LLM processing
+        filtered_links = filter_pdf_links(js_extracted_content, domain_name)
+        
+        if not filtered_links:
+            log_message(f"📭 No potential PDF links found after filtering for product: {product_name}", "INFO")
+            return
+        
+        log_message(f"🔍 Sending {len(filtered_links)} filtered links to LLM for analysis", "INFO")
+
+        # Step 3: Use LLMExtractionStrategy to identify Data Sheet links from filtered content
         pdf_llm_strategy = get_pdf_llm_strategy(api_key=api_key, model=model)
         
-        # Process each link with LLM to identify PDFs
+        # Process filtered links with LLM to identify PDFs
         pdf_links = []
         seen_pdf_urls_in_page = set()
-        raw =f"raw:\n product_url:{product_url}\n"
-        for link_item in js_extracted_content:
-             # Create a raw HTML URL for LLM processing
+        raw = f"raw:\n product_url:{product_url}\n"
+        for link_item in filtered_links:
+            # Create a raw HTML URL for LLM processing
             raw += f"{link_item['html']}\n"
 
         raw_html_url = raw
@@ -622,7 +756,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_width = 1080,  # Width of the browser viewport
         viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
@@ -932,7 +1066,7 @@ async def fetch_and_process_page_with_js(
         let allRowsData = [];
         const rowSelectors = '{", ".join(elements)}';
         const buttonSelector = '{button_selector}';
-        const maxPages = 7;
+        const maxPages = 100;
         let currentPage = 1;
 
 
@@ -961,6 +1095,7 @@ async def fetch_and_process_page_with_js(
             console.log('[JS] Pagination detected. Starting automatic pagination...');
             let nextButton = document.querySelector(buttonSelector);
             
+            let lastPageData = allRowsData[0].data;
             while (currentPage < maxPages && nextButton && nextButton.offsetParent !== null && !nextButton.disabled) {{
                 // Click to load next page
                 nextButton.click();
@@ -972,6 +1107,12 @@ async def fetch_and_process_page_with_js(
                 
                 // Extract new page data
                 const newPageData = extractRows();
+
+                if(newPageData.length !== lastPageData.length){{
+                    console.log('[JS] No new data found. Stopping pagination.');
+                    break;
+                }}
+
                 allRowsData.push({{
                     page: currentPage,
                     data: newPageData
@@ -980,13 +1121,23 @@ async def fetch_and_process_page_with_js(
                 
                 // Update button reference after DOM changes
                 nextButton = document.querySelector(buttonSelector);
+
+                // Update lastPageData
+                lastPageData = newPageData;
             }}
             console.log('[JS] Pagination complete');
         }} else {{
             console.log('[JS] No pagination button selector provided. Returning single page data.');
         }}
 
-        return allRowsData;
+        try{{
+            return allRowsData;
+        }}
+        catch(error){{
+            console.log('[JS] Error: ', error);
+            await new Promise(r => setTimeout(r, 30000));
+            return error.message;
+        }}
     """
 
     complete_venues = []
@@ -1012,6 +1163,10 @@ async def fetch_and_process_page_with_js(
                 js_extracted_content = results.js_execution_result['results'][0]
             else:
                 js_extracted_content = results.js_execution_result
+
+        with open("js_extracted_content.txt", "w") as f:
+            f.write(str(js_extracted_content))
+
         if not js_extracted_content:
             log_message("No content extracted via JS", "INFO")
             return [], True
@@ -1054,4 +1209,5 @@ async def fetch_and_process_page_with_js(
         return complete_venues, False
     except Exception as e:
         log_message(f"Error during JS-based crawling: {str(e)}", "INFO")
+        traceback.print_exc()
         return [], True

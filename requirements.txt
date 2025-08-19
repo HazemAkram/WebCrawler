@@ -1,26 +1,17 @@
-"""
-DeepSeek AI Web Crawler
-Copyright (c) 2025 Ayaz Mensyoğlu
-
-This file is part of the DeepSeek AI Web Crawler project.
-Licensed under the Apache License, Version 2.0.
-See NOTICE file for additional terms and conditions.
-"""
-
 # ----------------------------------------------------------------  this programe uses python 3.11 ----------------------------------------------------------------
 
 # Core web crawling and AI dependencies
 Crawl4AI==0.7.0
-python-dotenv==1.0.1
-pydantic==2.10.6
-groq==0.29.0
+python-dotenv==1.1.0
+pydantic==2.11.7
+groq==0.30.0
 
 # Web framework
-Flask==3.0.0
+Flask==3.1.1
 Werkzeug==3.1.3
 
 # HTTP and networking
-aiohttp==3.12.13
+aiohttp==3.11.11
 aiofiles==24.1.0
 
 # Web scraping and parsing
@@ -28,7 +19,7 @@ beautifulsoup4==4.13.4
 fake-useragent==2.2.0
 
 # PDF processing and image manipulation
-opencv-python==4.10.0
+opencv-python==4.10.0.84
 Pillow==10.4.0
 pytesseract==0.3.13
 pyzbar==0.1.9

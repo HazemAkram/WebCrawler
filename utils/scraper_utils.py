@@ -619,48 +619,122 @@ async def download_pdf_links(
     except Exception as e:
         log_message(f"⚠️ Error During processing  {product_url} pdf : {e}", "ERROR")
 
-def get_page_number(base_url: str): 
+def detect_pagination_type(url: str) -> str:
+    """
+    Detect the pagination type from a URL.
     
+    Args:
+        url (str): The URL to analyze
+        
+    Returns:
+        str: The detected pagination type ("path", "page", "offset", "start", "skip", "limit_offset", "cursor", "after", "before", or "unknown")
+    """
     try:
-        parsed = urlparse(base_url)
+        parsed = urlparse(url)
+        path = parsed.path
         query_params = parse_qs(parsed.query)
         
-        # Remove any existing pagination parameters
-        pagination_params_to_remove = [
+        # Check for path-based pagination
+        path_parts = [part for part in path.split('/') if part]
+        for i, part in enumerate(path_parts):
+            if part.isdigit():
+                # Check if this looks like a page number
+                if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog']) or \
+                   (i == len(path_parts) - 1 and len(path_parts) > 1):
+                    return "path"
+        
+        # Check query parameters
+        pagination_params = {
+            'page': ['page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber'],
+            'offset': ['offset'],
+            'start': ['start'],
+            'skip': ['skip'],
+            'limit_offset': ['limit'],
+            'cursor': ['cursor'],
+            'after': ['after'],
+            'before': ['before']
+        }
+        
+        for pagination_type, params in pagination_params.items():
+            for param in params:
+                if param in query_params:
+                    if pagination_type == 'limit_offset' and 'offset' in query_params:
+                        return 'limit_offset'
+                    return pagination_type
+        
+        return "unknown"
+        
+    except Exception as e:
+        log_message(f"⚠️ Error detecting pagination type from URL '{url}': {e}", "ERROR")
+        return "unknown"
+
+
+def get_page_number(base_url: str): 
+    """
+    Enhanced function to extract page number from various URL formats:
+    - Path-based: /products/1, /category/page/2
+    - Query-based: ?page=1, ?offset=20
+    - Hybrid: /products/1?sort=name
+    """
+    try:
+        parsed = urlparse(base_url)
+        path = parsed.path
+        query_params = parse_qs(parsed.query)
+        
+        # First, check for path-based pagination (e.g., /products/1, /category/page/2)
+        path_parts = [part for part in path.split('/') if part]
+        
+        # Look for numeric page numbers in the path
+        for i, part in enumerate(path_parts):
+            if part.isdigit():
+                # Check if this looks like a page number (not an ID)
+                # Common patterns: /page/1, /1, /p/1, /products/1
+                if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog']) or \
+                   (i == len(path_parts) - 1 and len(path_parts) > 1):
+                    log_message(f"📄 Found path-based page number: {part} in URL path", "INFO")
+                    return int(part)
+        
+        # If no path-based pagination found, check query parameters
+        pagination_params_to_check = [
             'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
             'offset', 'start', 'skip', 'from',
             'limit', 'size', 'per_page', 'items_per_page',
             'cursor', 'after', 'before', 'next', 'prev',
             'page_id', 'pageid', 'pageno', 'pagenum'
         ]
-
-        pagintaion_type = ""
-        for param in query_params: 
-            for rparam in pagination_params_to_remove: 
-                if param == rparam: 
-                    pagintaion_type = param
-
-        return int(query_params[pagintaion_type][0])
+        
+        for param in pagination_params_to_check:
+            if param in query_params:
+                try:
+                    page_num = int(query_params[param][0])
+                    log_message(f"📄 Found query-based page number: {param}={page_num}", "INFO")
+                    return page_num
+                except (ValueError, IndexError):
+                    continue
+        
+        # No pagination found
+        log_message(f"⚠️ No pagination detected in URL: {base_url}", "INFO")
+        return None
+        
     except Exception as e: 
-        
-        if str(e) == "''": 
-            log_message(f"⚠️ Error During Extracting Page Number URL IS NOT PAGINTABLE ", "INFO")
-            return None
-        
-        else : 
-            log_message(f"⚠️ Error During Extracting Page Number : {e}", "INFO")
-            return None
+        log_message(f"⚠️ Error extracting page number from URL '{base_url}': {e}", "ERROR")
+        return None
 
 
 def append_page_param(base_url: str, page_number: int, pagination_type: str = "auto") -> str:
     """
-    Enhanced pagination parameter handler that supports multiple pagination patterns.
+    Enhanced pagination parameter handler that supports multiple pagination patterns:
+    - Path-based: /products/1 → /products/2
+    - Query-based: ?page=1 → ?page=2
+    - Hybrid: /products/1?sort=name → /products/2?sort=name
     
     Args:
         base_url (str): The base URL to append pagination to
         page_number (int): The page number to navigate to
         pagination_type (str): Type of pagination to use. Options:
             - "auto": Automatically detect pagination type from URL
+            - "path": Path-based pagination (/page/X)
+            - "query": Query-based pagination (?page=X)
             - "page": Page-based pagination (?page=X)
             - "offset": Offset-based pagination (?offset=X)
             - "start": Start-based pagination (?start=X)
@@ -674,73 +748,141 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
         str: URL with appropriate pagination parameter
     """
     try: 
+        # Get pagination configuration
+        from config import DEFAULT_CONFIG
+        pagination_config = DEFAULT_CONFIG.get("pagination_settings", {})
+        items_per_page = pagination_config.get("items_per_page", 20)
+        
         # Parse the URL
         parsed = urlparse(base_url)
+        path = parsed.path
         query_params = parse_qs(parsed.query)
         
+        # Detect current pagination type
+        current_page = get_page_number(base_url)
+        detected_pagination_type = "unknown"
         
-        # Remove any existing pagination parameters
-        pagination_params_to_remove = [
-            'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
-            'offset', 'start', 'skip', 'from',
-            'limit', 'size', 'per_page', 'items_per_page',
-            'cursor', 'after', 'before', 'next', 'prev',
-            'page_id', 'pageid', 'pageno', 'pagenum'
-        ]
-        pagination_type = ""
-        for param in query_params: 
-            for r_param in pagination_params_to_remove: 
-                if param == r_param: 
-                    pagination_type = param
+        # Check for path-based pagination
+        path_parts = [part for part in path.split('/') if part]
+        for i, part in enumerate(path_parts):
+            if part.isdigit() and current_page:
+                # Check if this looks like a page number
+                if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog']) or \
+                   (i == len(path_parts) - 1 and len(path_parts) > 1):
+                    detected_pagination_type = "path"
                     break
-
-        pagintaion_page = query_params[pagination_type]
-        query_params.pop(pagination_type, None)
-
-        # Calculate pagination values based on type
-        if (
-            pagination_type == "page" or 
-            pagination_type == 'p' or 
-            pagination_type == 'pg' or 
-            pagination_type == 'page_num' or 
-            pagination_type == 'page_number' or 
-            pagination_type == 'pageNumber'
-        ):
-            query_params[pagination_type] = [str(page_number)]
-        elif pagination_type == "offset":
-            query_params['offset'] = [str((page_number - 1) * 20)]  # Assuming 20 items per page
-        elif pagination_type == "start":
-            query_params['start'] = [str((page_number - 1) * 20)]
-        elif pagination_type == "skip":
-            query_params['skip'] = [str((page_number - 1) * 20)]
-        elif pagination_type == "limit_offset":
-            query_params['limit'] = ['20']
-            query_params['offset'] = [str((page_number - 1) * 20)]
-        elif pagination_type == "cursor":
-            # For cursor-based, we'll use a simple numeric cursor
-            # In real scenarios, you might need to get the actual cursor from previous page
-            query_params['cursor'] = [str(page_number * 20)]
-        elif pagination_type == "after":
-            query_params['after'] = [str(page_number * 20)]
-        elif pagination_type == "before":
-            query_params['before'] = [str(page_number * 20)]
-        # else:
-        #     # Default to page-based pagination
-        #     query_params['page'] = [str(page_number)]
         
-        # Reconstruct the URL
-        new_query = urlencode(query_params, doseq=True)
-        new_parsed = parsed._replace(query=new_query)
+        # If no path-based pagination, check query parameters
+        if detected_pagination_type == "unknown":
+            pagination_params_to_check = [
+                'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
+                'offset', 'start', 'skip', 'from',
+                'limit', 'size', 'per_page', 'items_per_page',
+                'cursor', 'after', 'before', 'next', 'prev',
+                'page_id', 'pageid', 'pageno', 'pagenum'
+            ]
+            
+            for param in pagination_params_to_check:
+                if param in query_params:
+                    detected_pagination_type = param
+                    break
         
-        return urlunparse(new_parsed)
-    except Exception as e :
-
-        if str(e)  == "''": 
-            log_message(f"⚠️ Error During Appending page parameter URL IS NOT PAGINTABLE", "INFO")
-            return base_url
-        else: 
-            log_message(f"⚠️ Error during Append Page Parameter : {e}", "INFO")
-            return base_url
+        # Use detected type if auto is specified
+        if pagination_type == "auto":
+            pagination_type = detected_pagination_type
+            # If still unknown, use fallback
+            if pagination_type == "unknown":
+                pagination_type = pagination_config.get("fallback_type", "page")
+        
+        # Handle path-based pagination
+        if pagination_type == "path" or (detected_pagination_type == "path" and pagination_type == "auto"):
+            # Find the page number in the path and replace it
+            new_path_parts = []
+            page_replaced = False
+            
+            for i, part in enumerate(path_parts):
+                if part.isdigit() and not page_replaced:
+                    # Check if this looks like a page number
+                    if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog']) or \
+                       (i == len(path_parts) - 1 and len(path_parts) > 1):
+                        new_path_parts.append(str(page_number))
+                        page_replaced = True
+                    else:
+                        new_path_parts.append(part)
+                else:
+                    new_path_parts.append(part)
+            
+            # If no page number found in path, append it
+            if not page_replaced:
+                new_path_parts.append(str(page_number))
+            
+            new_path = '/' + '/'.join(new_path_parts)
+            new_parsed = parsed._replace(path=new_path)
+            
+            log_message(f"🔄 Path-based pagination: {path} → {new_path} (page {page_number})", "INFO")
+            return urlunparse(new_parsed)
+        
+        # Handle query-based pagination
+        else:
+            # Remove any existing pagination parameters
+            pagination_params_to_remove = [
+                'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
+                'offset', 'start', 'skip', 'from',
+                'limit', 'size', 'per_page', 'items_per_page',
+                'cursor', 'after', 'before', 'next', 'prev',
+                'page_id', 'pageid', 'pageno', 'pagenum'
+            ]
+            
+            # Find and remove existing pagination parameter
+            existing_pagination_param = None
+            for param in pagination_params_to_remove:
+                if param in query_params:
+                    existing_pagination_param = param
+                    query_params.pop(param, None)
+                    break
+            
+            # Calculate pagination values based on type
+            if pagination_type in ["page", "p", "pg", "page_num", "page_number", "pageNumber"]:
+                query_params['page'] = [str(page_number)]
+            elif pagination_type == "offset":
+                # Calculate offset based on page number
+                offset_value = (page_number - 1) * items_per_page
+                query_params['offset'] = [str(offset_value)]
+            elif pagination_type == "start":
+                # Calculate start based on page number
+                start_value = (page_number - 1) * items_per_page
+                query_params['start'] = [str(start_value)]
+            elif pagination_type == "skip":
+                # Calculate skip based on page number
+                skip_value = (page_number - 1) * items_per_page
+                query_params['skip'] = [str(skip_value)]
+            elif pagination_type == "limit_offset":
+                query_params['limit'] = [str(items_per_page)]
+                # Calculate offset based on page number
+                offset_value = (page_number - 1) * items_per_page
+                query_params['offset'] = [str(offset_value)]
+            elif pagination_type == "cursor":
+                # For cursor-based, we'll use a simple numeric cursor
+                # In real scenarios, you might need to get the actual cursor from previous page
+                query_params['cursor'] = [str(page_number * items_per_page)]
+            elif pagination_type == "after":
+                query_params['after'] = [str(page_number * items_per_page)]
+            elif pagination_type == "before":
+                query_params['before'] = [str(page_number * items_per_page)]
+            else:
+                # Default to page-based pagination
+                query_params['page'] = [str(page_number)]
+            
+            # Reconstruct the URL
+            new_query = urlencode(query_params, doseq=True)
+            new_parsed = parsed._replace(query=new_query)
+            
+            log_message(f"🔄 Query-based pagination: {existing_pagination_param or 'page'}={page_number}", "INFO")
+            return urlunparse(new_parsed)
+            
+    except Exception as e:
+        log_message(f"⚠️ Error during pagination parameter handling: {e}", "ERROR")
+        return base_url
 
 
 def get_browser_config() -> BrowserConfig:
@@ -1089,7 +1231,7 @@ async def fetch_and_process_page_with_js(
         }});
         console.log(`[JS] Extracted initial page with ${{allRowsData[0].data.length}} rows`);
 
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise(r => setTimeout(r, 6000));
         // Only attempt pagination if valid button selector exists
         if (buttonSelector && buttonSelector.trim() !== '') {{
             console.log('[JS] Pagination detected. Starting automatic pagination...');

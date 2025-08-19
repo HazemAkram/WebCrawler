@@ -29,7 +29,8 @@ from utils.scraper_utils import (
     append_page_param,  
     get_regex_strategy,
     fetch_and_process_page_with_js,
-    get_page_number
+    get_page_number,
+    detect_pagination_type
 )
 
 load_dotenv()
@@ -121,7 +122,15 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
             log_message(f"Domain: {domain_name}", "INFO")
             print(f"Domain: {domain_name}")
 
+            # Enhanced pagination handling
             page_number = get_page_number(url)
+            if page_number is None:
+                page_number = 1  # Start from page 1 if no page number found
+            
+            # Detect pagination type for better handling
+            pagination_type = detect_pagination_type(url)
+            log_message(f"🔍 Detected pagination type: {pagination_type}", "INFO")
+                
             while True:
                 # Check if stop is requested
                 if stop_requested_callback and stop_requested_callback():
@@ -129,8 +138,9 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                     break
 
                 if button_selector:
+                    # For button-based pagination, use the current URL
                     paged_url = url
-                    log_message(f"🔄 Crawling URL: {paged_url}", "INFO")
+                    log_message(f"🔄 Crawling URL with JS pagination: {paged_url} (page {page_number})", "INFO")
                     # Use JS-based extraction
                     venues, no_results = await fetch_and_process_page_with_js(
                         crawler=crawler,
@@ -142,8 +152,9 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         seen_names=seen_names,
                     )
                 else:
-                    paged_url = append_page_param(url, page_number)
-                    log_message(f"🔄 Crawling URL: {paged_url}", "INFO")
+                    # For URL-based pagination, construct the paged URL
+                    paged_url = append_page_param(url, page_number, pagination_type)
+                    log_message(f"🔄 Crawling URL with {pagination_type} pagination: {paged_url} (page {page_number})", "INFO")
                     # Use standard extraction
                     venues, no_results = await fetch_and_process_page(
                         crawler = crawler,
@@ -191,8 +202,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         'total_venues': len(all_venues)
                     })
 
-                if page_number == None: 
-                    break
+                # Increment page number for next iteration
                 page_number += 1
                 
                 # Update current page for web interface

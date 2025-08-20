@@ -32,17 +32,14 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 # Groq API configuration
 GROQ_MODEL = "openai/gpt-oss-120b"  # Default model for text analysis
 
-def get_groq_client():
+def get_groq_client(api_key):
     """
     Initialize and return Groq client using API key from environment.
     Returns the client or None if API key is not available.
     """
-    api_key = os.getenv('GROQ_API_KEY')
     if not api_key:
-        print("⚠️ GROQ_API_KEY not found in environment variables")
-        print("   Please set GROQ_API_KEY environment variable to use AI-powered text removal")
-        return None
-    
+        api_key = os.getenv('GROQ_API_KEY')
+        print(f"🤖 Groq client initialized: from .env ")    
     try:
         client = groq.Groq(api_key=api_key)
         return client
@@ -378,13 +375,13 @@ def remove_region(img, bbox, padding=0):
     avg_color = estimate_background_color(img, (x, y, w, h))
     cv2.rectangle(img, (x, y), (x + w, y + h), avg_color, -1)
 
-def replace_text_in_scanned_pdf_ai(images):
+def replace_text_in_scanned_pdf_ai(images, api_key: str):
     """
     Automatically removes contact information using AI analysis instead of manual search text.
     Uses Groq API to identify what should be removed.
     """
     modified_images = []
-    groq_client = get_groq_client()
+    groq_client = get_groq_client(api_key)
     
     if not groq_client:
         print("⚠️ Cannot perform AI-powered text removal without Groq API key")
@@ -518,7 +515,7 @@ def remove_qr_codes_from_pdf(images):
 
 
 
-def pdf_processing(file_path: str):
+def pdf_processing(file_path: str, api_key: str):
     """
     Main processing pipeline: AI-powered text removal -> QR removal -> Save PDF
     No longer requires search_text_list parameter - fully automated with AI.
@@ -548,7 +545,7 @@ def pdf_processing(file_path: str):
     # Processing pipeline
     try:
         print("🤖 Starting AI-powered text removal...")
-        text_removed = replace_text_in_scanned_pdf_ai(pdf_images)
+        text_removed = replace_text_in_scanned_pdf_ai(pdf_images, api_key)
         
         print("🔍 Starting QR code removal...")
         final_images = remove_qr_codes_from_pdf(text_removed)

@@ -217,7 +217,9 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     log_message(f"Crawling completed. Total venues processed: {len(all_venues)}", "SUCCESS")
 
 async def main():
+    log_message(f"{'='*50} Starting crawling {'='*50}", "INFO")
     await crawl_from_sites_csv("sites.csv")
+    log_message(f"{'='*50} Crawl completed {'='*50}", "INFO")
 
 if __name__ == "__main__":
     asyncio.run(main()) 

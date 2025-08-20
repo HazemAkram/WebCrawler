@@ -8,6 +8,7 @@ See NOTICE file for additional terms and conditions.
 """
 
 
+import html
 import json
 import os
 import hashlib
@@ -609,7 +610,7 @@ async def download_pdf_links(
 
 
                             # AI-powered PDF cleaning - no manual search text needed
-                            pdf_processing(file_path=save_path)
+                            pdf_processing(file_path=save_path, api_key=api_key)
                             log_message(f"\t✅ Downloaded {pdf_type} ({pdf_language}): {save_path}", "INFO")
                         else:
                             log_message(f"❌ Failed to download: {pdf_url} (Status: {resp.status})", "INFO")
@@ -1157,6 +1158,11 @@ async def fetch_and_process_page(
         log_message(f"No products found on page {page_number}.", "INFO")
         return [], False
 
+
+    with open("result.txt", "w", encoding="utf-8") as f:
+        f.write(str(result))
+
+    
     # Process product
     complete_venues = []
     for venue in extracted_data:

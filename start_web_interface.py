@@ -106,7 +106,7 @@ def main():
     def open_browser():
         time.sleep(2)
         try:
-            webbrowser.open('http://127.0.0.1:5000')
+            webbrowser.open('http://65.108.122.8:5000')
         except:
             pass
     

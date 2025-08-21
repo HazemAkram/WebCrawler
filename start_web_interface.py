@@ -59,10 +59,10 @@ def security_warning():
     print("\n" + "="*60)
     print("🚨 SECURITY WARNING 🚨")
     print("="*60)
-    print("This web interface is designed for LOCAL USE ONLY.")
-    print("⚠️  DO NOT expose this to the internet without proper security measures.")
+    print("This web interface is configured for EXTERNAL ACCESS.")
+    print("⚠️  External access is enabled - ensure proper security measures are in place.")
     print("\n🔒 Current security settings:")
-    print("   • Host: 127.0.0.1 (localhost only)")
+    print("   • Host: 65.108.122.8 (external access enabled)")
     print("   • Debug mode: Disabled")
     print("   • Secret key: Auto-generated")
     print("\n🛡️ For production deployment, consider:")
@@ -97,8 +97,8 @@ def main():
     
     print("\n🌐 Starting web server...")
     print("📱 The web interface will open automatically in your browser")
-    print("🔗 Local access: http://127.0.0.1:5000")
-    print("🔒 External access: BLOCKED (security)")
+    print("🔗 Access: http://65.108.122.8:5000")
+    print("🌐 External access: ENABLED")
     print("\n⏹️  Press Ctrl+C to stop the server")
     print("=" * 50)
     
@@ -109,11 +109,6 @@ def main():
             webbrowser.open('http://65.108.122.8:5000')
         except:
             pass
-    
-    import threading
-    browser_thread = threading.Thread(target=open_browser)
-    browser_thread.daemon = True
-    browser_thread.start()
     
     # Start the Flask app
     try:

@@ -269,6 +269,6 @@ def download_output():
     )
 
 if __name__ == '__main__':
-    # SECURITY: Only bind to localhost (127.0.0.1) instead of 0.0.0.0
-    # This prevents external access from the internet
-    app.run(debug=DEBUG_MODE, host='127.0.0.1', port=5000) 
+    # SECURITY: Binding to specific IP address 65.108.122.8
+    # This allows external access from the specified IP
+    app.run(debug=DEBUG_MODE, host='65.108.122.8', port=5000) 

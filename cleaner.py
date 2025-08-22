@@ -25,7 +25,8 @@ import json
 from models.venue import TextRemove
 
 # Configuration constants
-QR_PADDING = 10              # Padding around QR codes
+QR_PADDING = 10              # Padding around QR codes (for QR removal)
+TEXT_PADDING = 1             # Minimal padding around text (for text removal)
 BG_SAMPLE_MARGIN = 40        # Background estimation margin
 RESCALE_FACTOR = 2           # QR enhancement scale factor
 
@@ -79,8 +80,7 @@ Analyze the following text and identify ALL instances of contact information tha
 - Postal codes and city information
 - Any other identifying contact information
 
-**TEXT TO ANALYZE:**
-{text_content}
+
 
 **INSTRUCTIONS:**
 1. Identify each piece of contact information
@@ -110,6 +110,10 @@ Example output format:
     "confidence": "high"
   }}
 ]
+
+
+**TEXT TO ANALYZE:**
+{text_content}
 """
 
     try:
@@ -375,10 +379,57 @@ def remove_region(img, bbox, padding=0):
     avg_color = estimate_background_color(img, (x, y, w, h))
     cv2.rectangle(img, (x, y), (x + w, y + h), avg_color, -1)
 
+def kmeans(input_img, k, i_val):
+    """
+    Simple K-means implementation for image enhancement
+    """
+    hist = cv2.calcHist([input_img],[0],None,[256],[0,256])
+    img = input_img.ravel()
+    img = np.reshape(img, (-1, 1))
+    img = img.astype(np.float32)
+
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+    flags = cv2.KMEANS_RANDOM_CENTERS
+    compactness,labels,centers = cv2.kmeans(img,k,None,criteria,10,flags)
+    centers = np.sort(centers, axis=0)
+
+    return centers[i_val].astype(int), centers, hist
+
+def enhance_image_for_ocr(image):
+    """
+    Simple image enhancement using K-means for better OCR
+    Returns enhanced image for OCR, original image unchanged
+    """
+    # Convert PIL to OpenCV format
+    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    
+    # Convert to grayscale for K-means
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    
+    # Apply K-means enhancement
+    text_value, centers, hist = kmeans(gray, k=4, i_val=1)
+    
+    # Create enhanced image for OCR
+    enhanced = gray.copy()
+    
+    # Apply simple contrast enhancement to text regions
+    # You can adjust the threshold based on your needs
+    text_mask = gray < text_value + 20  # Slightly above the text cluster value
+    
+    # Apply CLAHE only to text regions
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced_clahe = clahe.apply(gray)
+    
+    # Apply enhanced regions back to the image
+    enhanced[text_mask] = enhanced_clahe[text_mask]
+    
+    # Convert back to PIL format
+    return Image.fromarray(enhanced)
+
 def replace_text_in_scanned_pdf_ai(images, api_key: str):
     """
-    Automatically removes contact information using AI analysis instead of manual search text.
-    Uses Groq API to identify what should be removed.
+    Automatically removes contact information using AI analysis.
+    Uses K-means enhanced images for OCR, but processes original images.
     """
     modified_images = []
     groq_client = get_groq_client(api_key)
@@ -389,39 +440,42 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         return images
     
     for page_num, img in enumerate(images, 1):
-        print(f"🤖 Processing page {page_num} with AI...")
+        print(f"🤖 Processing page {page_num}...")
         
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        # Create enhanced image for OCR (original image unchanged)
+        enhanced_img = enhance_image_for_ocr(img)
         
-        # Extract all text from the page
-        data = pytesseract.image_to_data(img_cv, output_type=pytesseract.Output.DICT)
+        # Extract text from enhanced image
+        data = pytesseract.image_to_data(enhanced_img, output_type=pytesseract.Output.DICT)
         
         # Combine all text into a single string for AI analysis
         all_text = " ".join([text.strip() for text in data["text"] if text.strip()])
         
         if not all_text:
             print(f"   Page {page_num}: No text found")
-            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
+            modified_images.append(img)  # Keep original image unchanged
             continue
         
         # Use AI to analyze the text and identify what should be removed
         ai_analysis = analyze_text_with_ai(all_text, groq_client)
         
         if not ai_analysis:
-            print(f"   Page {page_num}: AI analysis returned no results")
-            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
+            print(f"   Page {page_num}: returned no results")
+            modified_images.append(img)  # Keep original image unchanged
             continue
         
         print(f"   Page {page_num}: AI identified {len(ai_analysis)} items to remove")
         
         # Process each text item to find matches with AI-identified content
+        # Use ORIGINAL image for processing (not enhanced)
+        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         removed_count = 0
+        
         for i, text in enumerate(data["text"]):
             text_lower = text.strip().lower()
             if not text_lower:
                 continue
-            if text == "www.omegamotor.com.tr":
-                print(text)
+            
             # Check if this text should be removed based on AI analysis
             for ai_item in ai_analysis:
                 text_to_remove = ai_item.get("text_to_remove", "").lower()
@@ -437,14 +491,17 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
                     bbox = (data["left"][i], data["top"][i], 
                             data["width"][i], data["height"][i])
                     
-                    # Remove the text region
-                    remove_region(img_cv, bbox, padding=QR_PADDING)
+                    # Remove the text region from ORIGINAL image
+                    # Use minimal padding for text to fit exactly
+                    remove_region(img_cv, bbox, padding=TEXT_PADDING)
                     
-                    print(f"      🗑️ Removed: '{text.strip()}' (Reason: {reason}, Confidence: {confidence})")
+                    print(f"🗑️ Removed: '{text.strip()}' (Reason: {reason}, Confidence: {confidence})")
                     removed_count += 1
-                    break  # Remove this text and move to next text item
+                    break
         
         print(f"   Page {page_num}: Removed {removed_count} text regions")
+        
+        # Convert back to PIL format and add to results
         modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
     
     return modified_images
@@ -536,15 +593,11 @@ def pdf_processing(file_path: str, api_key: str):
         )
     except Exception as e:
         print(f"❌ Error converting PDF to images: {str(e)}")
-        print("This might be due to:")
-        print("1. Invalid PDF file")
-        print("2. Poppler not properly installed")
-        print("3. Insufficient permissions")
         return
     
     # Processing pipeline
     try:
-        print("🤖 Starting AI-powered text removal...")
+        print("🤖 Starting text removal...")
         text_removed = replace_text_in_scanned_pdf_ai(pdf_images, api_key)
         
         print("🔍 Starting QR code removal...")
@@ -565,15 +618,11 @@ def pdf_processing(file_path: str, api_key: str):
                 if not is_horizontal:
                     # Resize cover to match first page dimensions for portrait/square PDFs
                     cover = cover.resize((first_page_width, first_page_height), Image.Resampling.LANCZOS)
-                    print(f"📏 Resized cover to match PDF dimensions: {first_page_width}x{first_page_height}")
-                else:
-                    print(f"📏 PDF is horizontal ({first_page_width}x{first_page_height}), keeping original cover size")
-                
+                               
                 final_images.insert(0, cover)
             else:
                 # If no pages to compare, just add cover as is
                 final_images.insert(0, cover)
-                print("📄 Added cover page (no pages to compare dimensions)")
         else:
             print("⚠️ cover.png not found, skipping cover page")
         

@@ -1024,7 +1024,7 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-dis
             
             "❌ EXCLUDE:\n"
             "- Brochures, Catalogs, Flyers (marketing materials)\n"
-            "- Certificates and Certifications\n"
+            "- Certificates and Certifications and ISO Standards\n"
             "- Configurators and Configuration Tools\n"
             "- CAD files, 3D models, Design files\n"
             "- User Guides and Quick Start Guides\n"

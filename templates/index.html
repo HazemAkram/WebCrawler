@@ -34,6 +34,7 @@ See NOTICE file for additional terms and conditions.
 
         .main-container {
             background: rgba(255, 255, 255, 0.95);
+            -webkit-backdrop-filter: blur(10px);
             backdrop-filter: blur(10px);
             border-radius: 20px;
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
@@ -398,6 +399,9 @@ See NOTICE file for additional terms and conditions.
                             <i class="fas fa-terminal"></i> Processing Logs
                         </div>
                         <div>
+                            <a href="/files" class="btn btn-sm btn-success me-2" target="_blank">
+                                <i class="fas fa-folder-open"></i> Browse Files
+                            </a>
                             <button class="btn btn-sm btn-outline-primary" onclick="downloadOutput()">
                                 <i class="fas fa-download"></i> Download Output
                             </button>

@@ -1,0 +1,396 @@
+<!--
+DeepSeek AI Web Crawler - File Explorer
+Copyright (c) 2025 Ayaz Mensyoğlu
+
+This file is part of the DeepSeek AI Web Crawler project.
+Licensed under the Apache License, Version 2.0.
+See NOTICE file for additional terms and conditions.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Explorer - DeepSeek AI Web Crawler</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --secondary-color: #8b5cf6;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --danger-color: #ef4444;
+            --dark-color: #1f2937;
+            --light-color: #f9fafb;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            -webkit-backdrop-filter: blur(10px);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            margin: 2rem auto;
+            max-width: 1400px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 2rem;
+            border-radius: 20px 20px 0 0;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-weight: 700;
+            font-size: 2.5rem;
+        }
+
+        .header p {
+            margin: 0.5rem 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .content {
+            padding: 2rem;
+        }
+
+        .breadcrumb {
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .breadcrumb-item a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .breadcrumb-item a:hover {
+            color: var(--secondary-color);
+        }
+
+        .file-table {
+            background: white;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .table {
+            margin-bottom: 0;
+        }
+
+        .table th {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            border: none;
+            padding: 1rem;
+            font-weight: 600;
+        }
+
+        .table td {
+            padding: 1rem;
+            vertical-align: middle;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .table tbody tr:hover {
+            background-color: rgba(99, 102, 241, 0.05);
+        }
+
+        .folder-icon {
+            color: #f59e0b;
+            margin-right: 0.5rem;
+        }
+
+        .file-icon {
+            color: #6366f1;
+            margin-right: 0.5rem;
+        }
+
+        .pdf-icon {
+            color: #ef4444;
+            margin-right: 0.5rem;
+        }
+
+        .btn {
+            border-radius: 10px;
+            padding: 0.5rem 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: none;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+        }
+
+        .btn-outline-primary {
+            border: 2px solid var(--primary-color);
+            color: var(--primary-color);
+            background: transparent;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .stats-card {
+            background: linear-gradient(135deg, #f8fafc, #e2e8f0);
+            border-radius: 15px;
+            padding: 1.5rem;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .stats-number {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+
+        .stats-label {
+            color: #6b7280;
+            font-weight: 500;
+        }
+
+        .alert {
+            border-radius: 10px;
+            border: none;
+        }
+
+        .file-link {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .file-link:hover {
+            color: var(--secondary-color);
+            text-decoration: underline;
+        }
+
+        .folder-link {
+            color: var(--warning-color);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .folder-link:hover {
+            color: #d97706;
+            text-decoration: underline;
+        }
+
+        .back-btn {
+            background: linear-gradient(135deg, #6b7280, #4b5563);
+            color: white;
+            margin-bottom: 1rem;
+        }
+
+        .home-btn {
+            background: linear-gradient(135deg, var(--success-color), #059669);
+            color: white;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="main-container">
+            <!-- Header -->
+            <div class="header">
+                <h1><i class="fas fa-folder-open"></i> File Explorer</h1>
+                <p>Browse and download crawled files and PDFs</p>
+            </div>
+
+            <!-- Main Content -->
+            <div class="content">
+                <!-- Navigation Buttons -->
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <a href="/" class="btn home-btn">
+                            <i class="fas fa-home"></i> Back to Web Crawler
+                        </a>
+                        {% if parent_path %}
+                        <a href="/files/{{ parent_path }}" class="btn back-btn">
+                            <i class="fas fa-arrow-up"></i> Go Up
+                        </a>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <a href="/download_output" class="btn btn-primary">
+                            <i class="fas fa-download"></i> Download All as ZIP
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Breadcrumb Navigation -->
+                <div class="breadcrumb">
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb mb-0">
+                            <li class="breadcrumb-item">
+                                <a href="/files"><i class="fas fa-home"></i> Root</a>
+                            </li>
+                            {% if current_path %}
+                                {% set path_parts = current_path.split('/') %}
+                                {% for part in path_parts %}
+                                    {% if loop.index == 1 %}
+                                        <li class="breadcrumb-item">
+                                            <a href="/files/{{ part }}">{{ part }}</a>
+                                        </li>
+                                    {% else %}
+                                        {% set current_path_part = '/'.join(path_parts[:loop.index]) %}
+                                        <li class="breadcrumb-item">
+                                            <a href="/files/{{ current_path_part }}">{{ part }}</a>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        </ol>
+                    </nav>
+                </div>
+
+                <!-- Statistics -->
+                <div class="row mb-3">
+                    <div class="col-md-3">
+                        <div class="stats-card">
+                            <div class="stats-number">{{ folders|length }}</div>
+                            <div class="stats-label">Folders</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stats-card">
+                            <div class="stats-number">{{ files|length }}</div>
+                            <div class="stats-label">Files</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stats-card">
+                            <div class="stats-number">{{ current_path.split('/')|length if current_path else 0 }}</div>
+                            <div class="stats-label">Level Deep</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stats-card">
+                            <div class="stats-number">{{ current_path or 'Root' }}</div>
+                            <div class="stats-label">Current Path</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error Display -->
+                {% if error %}
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Error:</strong> {{ error }}
+                </div>
+                {% endif %}
+
+                <!-- File Explorer Table -->
+                <div class="file-table">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th style="width: 50px;"></th>
+                                <th>Name</th>
+                                <th>Size</th>
+                                <th>Modified</th>
+                                <th style="width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Folders -->
+                            {% for folder in folders %}
+                            <tr>
+                                <td>
+                                    <i class="fas fa-folder folder-icon"></i>
+                                </td>
+                                <td>
+                                    <a href="/files/{{ folder.path }}" class="folder-link">
+                                        {{ folder.name }}
+                                    </a>
+                                </td>
+                                <td>{{ folder.size }}</td>
+                                <td>{{ folder.modified }}</td>
+                                <td>
+                                    <a href="/files/{{ folder.path }}" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-folder-open"></i> Open
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+
+                            <!-- Files -->
+                            {% for file in files %}
+                            <tr>
+                                <td>
+                                    {% if file.name.lower().endswith('.pdf') %}
+                                        <i class="fas fa-file-pdf pdf-icon"></i>
+                                    {% else %}
+                                        <i class="fas fa-file file-icon"></i>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="/files/{{ file.path }}" class="file-link" target="_blank">
+                                        {{ file.name }}
+                                    </a>
+                                </td>
+                                <td>{{ file.size }}</td>
+                                <td>{{ file.modified }}</td>
+                                <td>
+                                    <a href="/files/{{ file.path }}" class="btn btn-sm btn-primary" target="_blank">
+                                        <i class="fas fa-download"></i> Download
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+
+                            <!-- Empty State -->
+                            {% if folders|length == 0 and files|length == 0 and not error %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">
+                                    <i class="fas fa-folder-open fa-3x mb-3"></i>
+                                    <p class="mb-0">This folder is empty</p>
+                                </td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Help Information -->
+                <div class="alert alert-info mt-4">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Tip:</strong> 
+                    <ul class="mb-0 mt-2">
+                        <li>Click on folder names to navigate into them</li>
+                        <li>Click on file names to view/download them</li>
+                        <li>Use the breadcrumb navigation to go back to previous levels</li>
+                        <li>Download the entire output as a ZIP file using the button above</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

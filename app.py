@@ -8,7 +8,7 @@ See NOTICE file for additional terms and conditions.
 """
 
 
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
 import os
 import asyncio
 import threading
@@ -19,6 +19,8 @@ import tempfile
 import shutil
 from datetime import datetime
 import secrets
+import mimetypes
+from pathlib import Path
 
 # Import the crawling functions
 from main import crawl_from_sites_csv, set_log_callback, log_message
@@ -267,6 +269,156 @@ def download_output():
         download_name=f'crawler_output_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip',
         mimetype='application/zip'
     )
+
+@app.route('/files')
+@app.route('/files/<path:subpath>')
+def file_explorer(subpath=''):
+    """File explorer for the output folder"""
+    output_folder = "output"
+    
+    # Ensure the output folder exists
+    if not os.path.exists(output_folder):
+        return render_template('file_explorer.html', 
+                             current_path='',
+                             files=[],
+                             folders=[],
+                             parent_path='',
+                             error="Output folder not found")
+    
+    # Build the full path
+    full_path = os.path.join(output_folder, subpath)
+    
+    # Security check: ensure the path is within the output folder
+    try:
+        full_path = os.path.abspath(full_path)
+        output_folder_abs = os.path.abspath(output_folder)
+        if not full_path.startswith(output_folder_abs):
+            return "Access denied", 403
+    except:
+        return "Invalid path", 400
+    
+    # Check if path exists
+    if not os.path.exists(full_path):
+        return "Path not found", 404
+    
+    # If it's a file, serve it
+    if os.path.isfile(full_path):
+        # Security: only allow safe file types
+        allowed_extensions = {'.pdf', '.txt', '.csv', '.json', '.zip', '.jpg', '.jpeg', '.png', '.gif'}
+        file_ext = os.path.splitext(full_path)[1].lower()
+        
+        if file_ext not in allowed_extensions:
+            return "File type not allowed", 403
+            
+        return send_from_directory(os.path.dirname(full_path), os.path.basename(full_path))
+    
+    # If it's a directory, show the file explorer
+    try:
+        items = os.listdir(full_path)
+        files = []
+        folders = []
+        
+        for item in sorted(items):
+            item_path = os.path.join(full_path, item)
+            if os.path.isdir(item_path):
+                folders.append({
+                    'name': item,
+                    'path': os.path.join(subpath, item) if subpath else item,
+                    'size': '--',
+                    'modified': datetime.fromtimestamp(os.path.getmtime(item_path)).strftime('%Y-%m-%d %H:%M:%S')
+                })
+            else:
+                # Get file size
+                try:
+                    size_bytes = os.path.getsize(item_path)
+                    if size_bytes < 1024:
+                        size_str = f"{size_bytes} B"
+                    elif size_bytes < 1024 * 1024:
+                        size_str = f"{size_bytes / 1024:.1f} KB"
+                    else:
+                        size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+                except:
+                    size_str = "Unknown"
+                
+                files.append({
+                    'name': item,
+                    'path': os.path.join(subpath, item) if subpath else item,
+                    'size': size_str,
+                    'modified': datetime.fromtimestamp(os.path.getmtime(item_path)).strftime('%Y-%m-%d %H:%M:%S')
+                })
+        
+        # Sort files and folders
+        folders.sort(key=lambda x: x['name'].lower())
+        files.sort(key=lambda x: x['name'].lower())
+        
+        # Calculate parent path
+        if subpath:
+            parent_parts = subpath.split('/')
+            if len(parent_parts) > 1:
+                parent_path = '/'.join(parent_parts[:-1])
+            else:
+                parent_path = ''
+        else:
+            parent_path = ''
+        
+        return render_template('file_explorer.html',
+                             current_path=subpath,
+                             files=files,
+                             folders=folders,
+                             parent_path=parent_path,
+                             error=None)
+                             
+    except Exception as e:
+        return render_template('file_explorer.html',
+                             current_path=subpath,
+                             files=[],
+                             folders=[],
+                             parent_path='',
+                             error=f"Error reading directory: {str(e)}")
+
+@app.route('/server-info')
+def server_info():
+    """Display server information"""
+    import platform
+    import psutil
+    
+    try:
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        server_info = {
+            'python_version': platform.python_version(),
+            'platform': platform.platform(),
+            'cpu_count': psutil.cpu_count(),
+            'cpu_percent': cpu_percent,
+            'memory_total': f"{memory.total / (1024**3):.1f} GB",
+            'memory_available': f"{memory.available / (1024**3):.1f} GB",
+            'memory_percent': memory.percent,
+            'disk_total': f"{disk.total / (1024**3):.1f} GB",
+            'disk_free': f"{disk.free / (1024**3):.1f} GB",
+            'disk_percent': disk.percent,
+            'output_folder_size': get_folder_size("output")
+        }
+        
+        return jsonify(server_info)
+    except ImportError:
+        return jsonify({'error': 'psutil not installed'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+def get_folder_size(folder_path):
+    """Calculate folder size in GB"""
+    try:
+        total_size = 0
+        for dirpath, dirnames, filenames in os.walk(folder_path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                if os.path.exists(filepath):
+                    total_size += os.path.getsize(filepath)
+        return f"{total_size / (1024**3):.2f} GB"
+    except:
+        return "Unknown"
 
 if __name__ == '__main__':
     # SECURITY: Binding to specific IP address 65.108.122.8

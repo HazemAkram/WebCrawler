@@ -1158,10 +1158,6 @@ async def fetch_and_process_page(
         log_message(f"No products found on page {page_number}.", "INFO")
         return [], False
 
-
-    with open("result.txt", "w", encoding="utf-8") as f:
-        f.write(str(result))
-
     
     # Process product
     complete_venues = []

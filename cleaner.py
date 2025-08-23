@@ -23,12 +23,14 @@ import groq
 from typing import List, Dict, Any
 import json
 from models.venue import TextRemove
+import re
 
 # Configuration constants
 QR_PADDING = 10              # Padding around QR codes (for QR removal)
 TEXT_PADDING = 1             # Minimal padding around text (for text removal)
 BG_SAMPLE_MARGIN = 40        # Background estimation margin
 RESCALE_FACTOR = 2           # QR enhancement scale factor
+OCR_CONFIDENCE_THRESHOLD = 50  # Minimum confidence for OCR text elements (0-100)
 
 # Groq API configuration
 GROQ_MODEL = "openai/gpt-oss-120b"  # Default model for text analysis
@@ -48,118 +50,21 @@ def get_groq_client(api_key):
         print(f"❌ Error initializing Groq client: {str(e)}")
         return None
 
-def analyze_text_with_ai(text_content: str, groq_client) -> List[Dict[str, Any]]:
+def set_ocr_confidence_threshold(threshold: int):
     """
-    Use Groq API to analyze text and identify contact information that should be removed.
+    Set the OCR confidence threshold for text element filtering.
     
     Args:
-        text_content (str): The text content to analyze
-        groq_client: Initialized Groq client
-        
-    Returns:
-        List[Dict[str, Any]]: List of text regions to remove with coordinates and content
+        threshold (int): Confidence threshold (0-100). Higher values mean stricter filtering.
     """
-    if not groq_client:
-        return []
-    
-    prompt = f"""
-You are an AI assistant specialized in identifying contact information and sensitive data in documents that should be removed for privacy and security purposes.
+    global OCR_CONFIDENCE_THRESHOLD
+    if 0 <= threshold <= 100:
+        OCR_CONFIDENCE_THRESHOLD = threshold
+        print(f"✅ OCR confidence threshold set to {threshold}")
+    else:
+        print(f"❌ Invalid confidence threshold: {threshold}. Must be between 0-100.")
 
-Analyze the following text and identify ALL instances of contact information that should be removed:
-
-**CONTACT INFORMATION TO REMOVE:**
-- Website URLs and domain names
-- Physical addresses (full or partial)
-- Phone numbers (including international formats)
-- Fax numbers
-- Email addresses
-- Social media handles
-- Contact person names with titles
-- Company contact details
-- Office locations and building information
-- Postal codes and city information
-- Any other identifying contact information
-
-
-
-**INSTRUCTIONS:**
-1. Identify each piece of contact information
-2. Provide the exact text that should be removed
-3. Include surrounding context if needed for accurate removal
-4. Be thorough - don't miss any contact details
-5. Focus on privacy and security concerns
-
-**OUTPUT FORMAT:**
-Return a JSON array containing objects with these fields:
-- text_to_remove: The exact text to remove
-- reason: Why this text should be removed
-- confidence: Your confidence level (high/medium/low)
-
-IMPORTANT: Return ONLY valid JSON array, no markdown formatting or additional text.
-
-Example output format:
-[
-  {{
-    "text_to_remove": "John Doe",
-    "reason": "Contact person name",
-    "confidence": "high"
-  }},
-  {{
-    "text_to_remove": "john@example.com",
-    "reason": "Email address",
-    "confidence": "high"
-  }}
-]
-
-
-**TEXT TO ANALYZE:**
-{text_content}
-"""
-
-    try:
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an AI assistant that identifies contact information to remove from documents. Always return a valid JSON array containing objects with text_to_remove, reason, and confidence fields. Return ONLY the JSON array, no additional text or formatting."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.1,  # Low temperature for consistent results
-        )
-        
-        # Extract the response content
-        ai_response = response.choices[0].message.content.strip()
-        
-        # Try to parse the JSON response
-        try:
-            # Remove any markdown formatting if present
-            if ai_response.startswith("```json"):
-                ai_response = ai_response[7:]
-            if ai_response.endswith("```"):
-                ai_response = ai_response[:-3]
-            
-            ai_response = ai_response.strip()
-            analysis_result = json.loads(ai_response)
-            
-            if isinstance(analysis_result, list):
-                return analysis_result
-            else:
-                print(f"⚠️ Unexpected AI response format: {type(analysis_result)}")
-                return []
-                
-        except json.JSONDecodeError as e:
-            print(f"❌ Error parsing AI response as JSON: {str(e)}")
-            print(f"AI Response: {ai_response}")
-            return []
-            
-    except Exception as e:
-        print(f"❌ Error calling Groq API: {str(e)}")
-        return []
+# Old analyze_text_with_ai function removed - replaced with analyze_text_with_ai_chunks for better context handling
 
 def find_tesseract_path():
     """
@@ -430,6 +335,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
     """
     Automatically removes contact information using AI analysis.
     Uses K-means enhanced images for OCR, but processes original images.
+    Improved approach: processes text in contextual chunks instead of word-by-word.
     """
     modified_images = []
     groq_client = get_groq_client(api_key)
@@ -445,66 +351,350 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         # Create enhanced image for OCR (original image unchanged)
         enhanced_img = enhance_image_for_ocr(img)
         
-        # Extract text from enhanced image
+        # Extract text from enhanced image with position data
         data = pytesseract.image_to_data(enhanced_img, output_type=pytesseract.Output.DICT)
         
-        # Combine all text into a single string for AI analysis
-        all_text = " ".join([text.strip() for text in data["text"] if text.strip()])
+        # Create contextual text chunks with bounding box information
+        text_chunks = create_contextual_text_chunks(data)
         
-        if not all_text:
-            print(f"   Page {page_num}: No text found")
+        if not text_chunks:
+            print(f"   Page {page_num}: No text chunks found")
             modified_images.append(img)  # Keep original image unchanged
             continue
         
-        # Use AI to analyze the text and identify what should be removed
-        ai_analysis = analyze_text_with_ai(all_text, groq_client)
+        print(f"   Page {page_num}: Created {len(text_chunks)} contextual text chunks")
+        
+        # Use AI to analyze the text chunks and identify what should be removed
+        ai_analysis = analyze_text_with_ai_chunks(text_chunks, groq_client)
         
         if not ai_analysis:
-            print(f"   Page {page_num}: returned no results")
+            print(f"   Page {page_num}: AI returned no results")
             modified_images.append(img)  # Keep original image unchanged
             continue
         
         print(f"   Page {page_num}: AI identified {len(ai_analysis)} items to remove")
         
-        # Process each text item to find matches with AI-identified content
-        # Use ORIGINAL image for processing (not enhanced)
+        # Process text chunks for removal using ORIGINAL image
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         removed_count = 0
         
-        for i, text in enumerate(data["text"]):
-            text_lower = text.strip().lower()
-            if not text_lower:
-                continue
-            
-            # Check if this text should be removed based on AI analysis
-            for ai_item in ai_analysis:
-                text_to_remove = ai_item.get("text_to_remove", "").lower()
-                reason = ai_item.get("reason", "unknown")
-                confidence = ai_item.get("confidence", "low")
+        # Process AI analysis results
+        for ai_item in ai_analysis:
+            text_to_remove = ai_item.get("text_to_remove", "").lower()
+            reason = ai_item.get("reason", "unknown")
+            confidence = ai_item.get("confidence", "low")
+            chunk_ref = ai_item.get("chunk_reference", "")
+                        
+            # Find chunks that contain or match the text to remove
+            matching_chunks = []
+            for chunk in text_chunks:
+                chunk_text = chunk['text'].lower()
+                if not chunk_text:
+                    continue
                 
-                # Check if the current text contains or matches the AI-identified text
-                if (text_to_remove in text_lower or 
-                    text_lower in text_to_remove or 
-                    text_lower == text_to_remove):
-                    
-                    # Get the bounding box for this text
-                    bbox = (data["left"][i], data["top"][i], 
-                            data["width"][i], data["height"][i])
+                # Check if this chunk contains or matches the AI-identified text
+                if (text_to_remove in chunk_text or 
+                    chunk_text in text_to_remove or 
+                    chunk_text == text_to_remove):
+                    matching_chunks.append(chunk)
+            
+            if matching_chunks:                
+                # Remove all matching chunks
+                for chunk in matching_chunks:
+                    bbox = chunk['bbox']
                     
                     # Remove the text region from ORIGINAL image
                     # Use minimal padding for text to fit exactly
                     remove_region(img_cv, bbox, padding=TEXT_PADDING)
                     
-                    print(f"🗑️ Removed: '{text.strip()}' (Reason: {reason}, Confidence: {confidence})")
+                    print(f"🗑️ Removed chunk: '{chunk['text'].strip()}' (Reason: {reason}, Confidence: {confidence})")
                     removed_count += 1
-                    break
+            else:
+                print(f"   ⚠️ No matching chunks found for: '{text_to_remove}'")
         
-        print(f"   Page {page_num}: Removed {removed_count} text regions")
+        print(f"   Page {page_num}: Removed {removed_count} text chunks")
         
         # Convert back to PIL format and add to results
         modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
     
     return modified_images
+
+def create_contextual_text_chunks(data):
+    """
+    Create contextual text chunks from Tesseract output data.
+    Groups related text elements into meaningful chunks for better AI analysis.
+    
+    Args:
+        data: Tesseract output data dictionary
+        
+    Returns:
+        List of dictionaries containing text chunks with bounding box information
+    """
+    if not data or 'text' not in data:
+        return []
+    
+    chunks = []
+    current_chunk = None
+    
+    # Process text elements in reading order (top to bottom, left to right)
+    text_elements = []
+    for i in range(len(data['text'])):
+        if data['text'][i].strip():  # Only process non-empty text
+            text_elements.append({
+                'text': data['text'][i].strip(),
+                'left': data['left'][i],
+                'top': data['top'][i],
+                'width': data['width'][i],
+                'height': data['height'][i],
+                'conf': data['conf'][i] if 'conf' in data else 0
+            })
+    
+    # Sort by position (top to bottom, then left to right)
+    text_elements.sort(key=lambda x: (x['top'], x['left']))
+    
+    for element in text_elements:
+        # Skip low confidence elements
+        if element['conf'] < OCR_CONFIDENCE_THRESHOLD:
+            continue
+            
+        if current_chunk is None:
+            # Start new chunk
+            current_chunk = {
+                'text': element['text'],
+                'bbox': (element['left'], element['top'], element['width'], element['height']),
+                'elements': [element]
+            }
+        else:
+            # Check if this element should be part of the current chunk
+            should_merge = should_merge_text_elements(current_chunk, element)
+            
+            if should_merge:
+                # Merge into current chunk
+                current_chunk['text'] += ' ' + element['text']
+                current_chunk['bbox'] = merge_bounding_boxes(current_chunk['bbox'], 
+                                                          (element['left'], element['top'], element['width'], element['height']))
+                current_chunk['elements'].append(element)
+            else:
+                # Finalize current chunk and start new one
+                if current_chunk['text'].strip():
+                    chunks.append(current_chunk)
+                
+                current_chunk = {
+                    'text': element['text'],
+                    'bbox': (element['left'], element['top'], element['width'], element['height']),
+                    'elements': [element]
+                }
+    
+    # Add the last chunk if it exists
+    if current_chunk and current_chunk['text'].strip():
+        chunks.append(current_chunk)
+    return chunks
+
+def should_merge_text_elements(chunk, element):
+    """
+    Determine if a text element should be merged with the current chunk.
+    Uses spatial and contextual rules for intelligent grouping.
+    
+    Args:
+        chunk: Current text chunk
+        element: Text element to consider for merging
+        
+    Returns:
+        bool: True if elements should be merged
+    """
+    # Get current chunk's right and bottom boundaries
+    chunk_right = chunk['bbox'][0] + chunk['bbox'][2]
+    chunk_bottom = chunk['bbox'][1] + chunk['bbox'][3]
+    
+    # Check horizontal proximity (same line)
+    horizontal_distance = abs(element['left'] - chunk_right)
+    vertical_distance = abs(element['top'] - chunk['bbox'][1])
+    
+    # Same line: small vertical distance, reasonable horizontal distance
+    if vertical_distance <= 20:  # Within 20 pixels vertically
+        if horizontal_distance <= 50:  # Within 50 pixels horizontally
+            return True
+    
+    # Check vertical proximity (next line)
+    if horizontal_distance <= 30:  # Roughly aligned horizontally
+        if 0 < vertical_distance <= 40:  # Within 40 pixels below
+            return True
+    
+    # Check if this looks like a continuation (e.g., phone number parts)
+    current_text = chunk['text'].lower()
+    new_text = element['text'].lower()
+    
+    # Common patterns that should be merged
+    merge_patterns = [
+        # Phone numbers
+        (r'\d{3,4}$', r'^\d{3,4}'),  # Area code + number
+        (r'\d{3}$', r'^\d{4}'),       # 3 digits + 4 digits
+        (r'\d{4}$', r'^\d{4}'),       # 4 digits + 4 digits
+        (r'\(\d{3}\)$', r'^\d{3}'),   # (555) + 123
+        (r'\d{3}$', r'^\d{3}-\d{4}'), # 555 + 123-4567
+        
+        # Addresses
+        (r'street$|st\.$|avenue$|ave\.$|road$|rd\.$|drive$|dr\.$|lane$|ln\.$|boulevard$|blvd\.$', r'^\d+'),  # Street name + number
+        (r'\d+$', r'^[A-Z][a-z]+'),   # Number + street name
+        (r'[A-Z][a-z]+$', r'^\d+'),   # Street name + number
+        (r'\d+$', r'^[A-Z][a-z]+\s+[A-Z][a-z]+'),  # Number + "Main Street"
+        
+        # Names
+        (r'^[A-Z][a-z]+$', r'^[A-Z][a-z]+$'),  # First + Last name
+        (r'[A-Z][a-z]+$', r'^[A-Z][a-z]+'),    # Middle + Last name
+        
+        # Company names
+        (r'inc\.$|corp\.$|llc$|ltd\.$|company$|co\.$|corporation$', r'^[A-Z]'),  # Company suffix + continuation
+        (r'[A-Z][a-z]+$', r'^&'),     # Company name + "& Associates"
+        
+        # Email addresses
+        (r'[a-zA-Z0-9._%+-]+$', r'^@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),  # Username + @domain
+        (r'[a-zA-Z0-9._%+-]+@$', r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),  # Username@ + domain
+        
+        # URLs
+        (r'https?://$', r'^[a-zA-Z0-9.-]+'),  # http:// + domain
+        (r'www\.$', r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),  # www. + domain
+        
+        # Postal codes
+        (r'[A-Z]\d[A-Z]$', r'^\d[A-Z]\d'),  # Canadian postal code format
+        (r'\d{5}$', r'^-\d{4}'),      # US ZIP + 4 format
+    ]
+    
+    for pattern1, pattern2 in merge_patterns:
+        if re.search(pattern1, current_text) and re.search(pattern2, new_text):
+            return True
+    
+    return False
+
+def merge_bounding_boxes(bbox1, bbox2):
+    """
+    Merge two bounding boxes into a single encompassing box.
+    
+    Args:
+        bbox1: First bounding box (left, top, width, height)
+        bbox2: Second bounding box (left, top, width, height)
+        
+    Returns:
+        tuple: Merged bounding box (left, top, width, height)
+    """
+    left1, top1, width1, height1 = bbox1
+    left2, top2, width2, height2 = bbox2
+    
+    # Calculate new boundaries
+    new_left = min(left1, left2)
+    new_top = min(top1, top2)
+    new_right = max(left1 + width1, left2 + width2)
+    new_bottom = max(top1 + height1, top2 + height2)
+    
+    return (new_left, new_top, new_right - new_left, new_bottom - new_top)
+
+def analyze_text_with_ai_chunks(text_chunks, groq_client):
+    """
+    Use Groq API to analyze text chunks and identify contact information that should be removed.
+    Improved version that works with contextual text chunks instead of raw text.
+    
+    Args:
+        text_chunks: List of text chunks with bounding box information
+        groq_client: Initialized Groq client
+        
+    Returns:
+        List[Dict[str, Any]]: List of text regions to remove with coordinates and content
+    """
+    if not groq_client or not text_chunks:
+        return []
+    
+    # Prepare text chunks for AI analysis
+    chunk_texts = []
+    for i, chunk in enumerate(text_chunks):
+        chunk_texts.append(f"Chunk {i+1}: '{chunk['text']}'")
+    
+    analysis_text = "\n".join(chunk_texts)
+    
+    prompt = f"""
+You are an AI assistant specialized in identifying contact information and data in documents that should be removed.
+
+You are tasked to analyze the following text chunks and identify ALL instances of contact information that should be removed:
+
+**CONTACT INFORMATION TO REMOVE:**
+- Website URLs and domain names
+- Physical addresses (full or partial) - remove the address text itself
+- Phone numbers (including international formats)
+- Fax numbers
+- Email addresses
+- Social media handles
+- Contact person names with titles
+- Company contact details
+- Office locations and building information
+- Postal codes and city information
+- Any other identifying contact information
+
+**IMPORTANT INSTRUCTIONS:**
+1. Analyze each text chunk for contact information
+2. Provide the EXACT text that should be removed (as it appears in the chunks)
+3. Include surrounding context if needed for accurate removal
+4. Be thorough - don't miss any contact details
+5. Focus on privacy and security concerns
+6. Consider that some information might span multiple chunks
+7. Pay attention to chunk boundaries - don't split meaningful contact information
+8. For multi-word contact info, specify the complete phrase to remove
+
+**OUTPUT FORMAT:**
+Return a JSON array containing objects with these fields:
+- text_to_remove: The exact text to remove (as it appears in the chunks)
+- reason: Why this text should be removed
+- confidence: Your confidence level (high/medium/low)
+- chunk_reference: Which chunk(s) contain this information (e.g., "Chunk 1", "Chunks 2-3")
+
+**TEXT CHUNKS TO ANALYZE:**
+{analysis_text}
+
+IMPORTANT: Return ONLY valid JSON array, no markdown formatting or additional text.
+"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an AI assistant that identifies contact information to remove from documents. Always return a valid JSON array containing objects with text_to_remove, reason, confidence, and chunk_reference fields. Return ONLY the JSON array, no additional text or formatting."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.1,  # Low temperature for consistent results
+        )
+        
+        # Extract the response content
+        ai_response = response.choices[0].message.content.strip()
+        
+        # Try to parse the JSON response
+        try:
+            # Remove any markdown formatting if present
+            if ai_response.startswith("```json"):
+                ai_response = ai_response[7:]
+            if ai_response.endswith("```"):
+                ai_response = ai_response[:-3]
+            
+            ai_response = ai_response.strip()
+            analysis_result = json.loads(ai_response)
+            
+            if isinstance(analysis_result, list):
+                return analysis_result
+            else:
+                print(f"⚠️ Unexpected AI response format: {type(analysis_result)}")
+                return []
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ Error parsing AI response as JSON: {str(e)}")
+            print(f"AI Response: {ai_response}")
+            return []
+            
+    except Exception as e:
+        print(f"❌ Error calling Groq API: {str(e)}")
+        return []
 
 def remove_qr_codes_from_pdf(images):
 

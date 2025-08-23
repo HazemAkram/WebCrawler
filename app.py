@@ -376,6 +376,58 @@ def file_explorer(subpath=''):
                              parent_path='',
                              error=f"Error reading directory: {str(e)}")
 
+@app.route('/delete_item', methods=['POST'])
+def delete_item():
+    """Delete a file or folder from the output directory"""
+    try:
+        data = request.get_json()
+        item_path = data.get('path', '')
+        
+        if not item_path:
+            return jsonify({'error': 'No path provided'}), 400
+        
+        # Build the full path
+        output_folder = "output"
+        full_path = os.path.join(output_folder, item_path)
+        
+        # Security check: ensure the path is within the output folder
+        try:
+            full_path = os.path.abspath(full_path)
+            output_folder_abs = os.path.abspath(output_folder)
+            if not full_path.startswith(output_folder_abs):
+                return jsonify({'error': 'Access denied'}), 403
+        except:
+            return jsonify({'error': 'Invalid path'}), 400
+        
+        # Check if path exists
+        if not os.path.exists(full_path):
+            return jsonify({'error': 'Item not found'}), 404
+        
+        # Delete the item
+        if os.path.isdir(full_path):
+            if item_path == '':  # Empty path means delete all contents of output folder
+                # Delete all contents but keep the output folder itself
+                for item in os.listdir(full_path):
+                    item_path_full = os.path.join(full_path, item)
+                    if os.path.isdir(item_path_full):
+                        shutil.rmtree(item_path_full)
+                    else:
+                        os.remove(item_path_full)
+                message = "All items in output folder deleted successfully"
+            else:
+                # Delete specific directory and all contents
+                shutil.rmtree(full_path)
+                message = f"Directory '{item_path}' deleted successfully"
+        else:
+            # Delete file
+            os.remove(full_path)
+            message = f"File '{item_path}' deleted successfully"
+        
+        return jsonify({'success': True, 'message': message})
+        
+    except Exception as e:
+        return jsonify({'error': f'Error deleting item: {str(e)}'}), 500
+
 @app.route('/server-info')
 def server_info():
     """Display server information"""

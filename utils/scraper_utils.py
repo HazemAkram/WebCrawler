@@ -924,7 +924,7 @@ def get_regex_strategy() -> RegexExtractionStrategy:
 
 
 
-def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
+def get_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instant") -> LLMExtractionStrategy:
     """
     Returns the configuration for the language model extraction strategy.
     
@@ -975,7 +975,7 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill
     )
 
 
-def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
+def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instant") -> LLMExtractionStrategy:
     """
     Returns the configuration for the PDF extraction strategy using LLM.
     

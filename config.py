@@ -32,16 +32,9 @@ TEXT_REMOVE_KEYS = [
 # Default configuration settings
 DEFAULT_CONFIG = {
     "output_folder": "output",
-    "default_model": "groq/deepseek-r1-distill-llama-70b",
+    "default_model": "groq/llama-3.1-8b-instant",
     "available_models": [
-        "groq/deepseek-r1-distill-llama-70b",
-        "groq/llama3-8b-8192",
-        "groq/llama3-70b-8192",
-        "groq/mixtral-8x7b-32768",
-        "openai/gpt-4o",
-        "openai/gpt-4o-mini",
-        "anthropic/claude-3-5-sonnet-20241022",
-        "anthropic/claude-3-haiku-20240307"
+        "groq/llama-3.1-8b-instant"
     ],
     "crawler_settings": {
         "page_timeout": 30000,

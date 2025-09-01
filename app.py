@@ -185,7 +185,7 @@ def start_crawling():
     data = request.get_json()
     csv_filepath = data.get('csv_filepath')
     api_key = data.get('api_key')
-    model = data.get('model', DEFAULT_CONFIG['default_model'])
+    model = 'groq/llama-3.1-8b-instant'
     pdf_size_limit = data.get('pdf_size_limit', DEFAULT_CONFIG['pdf_settings']['max_file_size_mb'])
     skip_large_files = data.get('skip_large_files', DEFAULT_CONFIG['pdf_settings']['skip_large_files'])
     

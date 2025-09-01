@@ -279,30 +279,17 @@ See NOTICE file for additional terms and conditions.
                     </div>
                     <div class="card-body">
                         <div class="row">
-                            <div class="col-md-6">
+                            <div class="col-md-12">
                                 <label for="apiKey" class="form-label">API Key</label>
                                 <div class="input-group">
-                                    <input type="password" class="form-control" id="apiKey" placeholder="Enter your API key">
+                                    <input type="password" class="form-control" id="apiKey" placeholder="Enter your Groq API key">
                                     <button class="btn btn-outline-secondary" type="button" onclick="togglePassword()">
                                         <i class="fas fa-eye" id="eyeIcon"></i>
                                     </button>
                                 </div>
                                 <div class="form-text">
-                                    Supported providers: Groq, OpenAI, Anthropic
+                                    Using Groq - Llama 3.1 8B Instant model
                                 </div>
-                            </div>
-                            <div class="col-md-6">
-                                <label for="modelSelect" class="form-label">AI Model</label>
-                                <select class="form-select" id="modelSelect">
-                                    <option value="groq/deepseek-r1-distill-llama-70b">Groq - DeepSeek R1 Distill (70B)</option>
-                                    <option value="groq/llama3-8b-8192">Groq - Llama3 8B</option>
-                                    <option value="groq/llama3-70b-8192">Groq - Llama3 70B</option>
-                                    <option value="groq/mixtral-8x7b-32768">Groq - Mixtral 8x7B</option>
-                                    <option value="openai/gpt-4o">OpenAI - GPT-4o</option>
-                                    <option value="openai/gpt-4o-mini">OpenAI - GPT-4o Mini</option>
-                                    <option value="anthropic/claude-3-5-sonnet-20241022">Anthropic - Claude 3.5 Sonnet</option>
-                                    <option value="anthropic/claude-3-haiku-20240307">Anthropic - Claude 3 Haiku</option>
-                                </select>
                             </div>
                         </div>
                     </div>
@@ -318,7 +305,7 @@ See NOTICE file for additional terms and conditions.
                             <div class="col-md-6">
                                 <label for="pdfSizeLimit" class="form-label">Maximum PDF Size (MB)</label>
                                 <input type="number" class="form-control" id="pdfSizeLimit" 
-                                       placeholder="10" min="1" max="100" value="10">
+                                       placeholder="25" min="1" max="100" value="25">
                                 <div class="form-text">
                                     PDFs larger than this size will be skipped during download
                                 </div>
@@ -517,8 +504,8 @@ See NOTICE file for additional terms and conditions.
                 return;
             }
 
-            const model = document.getElementById('modelSelect').value;
-            const pdfSizeLimit = parseInt(document.getElementById('pdfSizeLimit').value) || 10;
+            const model = 'groq/llama-3.1-8b-instant';
+            const pdfSizeLimit = parseInt(document.getElementById('pdfSizeLimit').value) || 25;
             const skipLargeFiles = document.getElementById('skipLargeFiles').checked;
 
             fetch('/start_crawling', {

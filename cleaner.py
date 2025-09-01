@@ -668,7 +668,6 @@ IMPORTANT: Return ONLY valid JSON array, no markdown formatting or additional te
             temperature=0.1,  # Low temperature for consistent results
         )
 
-        response.usage()
         
         # Extract the response content
         ai_response = response.choices[0].message.content.strip()

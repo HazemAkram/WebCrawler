@@ -64,6 +64,7 @@ def read_sites_from_csv(input_file):
             })
     return sites
 
+
 async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str = "groq/llama-3.1-8b-instant", 
                               status_callback=None, stop_requested_callback=None):
     """

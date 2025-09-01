@@ -64,7 +64,7 @@ def read_sites_from_csv(input_file):
             })
     return sites
 
-async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b", 
+async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str = "groq/llama-3.1-8b-instant", 
                               status_callback=None, stop_requested_callback=None):
     """
     Crawl venue data from a list of category/product links, selectors, and button selectors stored in a CSV.
@@ -76,6 +76,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
         status_callback (function): Callback to update status for web interface
         stop_requested_callback (function): Callback to check if stop is requested
     """
+    print(f"Using model: {model}")
     browser_config = get_browser_config()
     llm_strategy = get_llm_strategy(api_key=api_key, model=model)
     regex_strategy = get_regex_strategy()

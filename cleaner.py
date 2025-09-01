@@ -30,7 +30,7 @@ QR_PADDING = 10              # Padding around QR codes (for QR removal)
 TEXT_PADDING = 1             # Minimal padding around text (for text removal)
 BG_SAMPLE_MARGIN = 40        # Background estimation margin
 RESCALE_FACTOR = 2           # QR enhancement scale factor
-OCR_CONFIDENCE_THRESHOLD = 50  # Minimum confidence for OCR text elements (0-100)
+OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # Groq API configuration
 GROQ_MODEL = "openai/gpt-oss-120b"  # Default model for text analysis
@@ -609,6 +609,7 @@ def analyze_text_with_ai_chunks(text_chunks, groq_client):
         chunk_texts.append(f"Chunk {i+1}: '{chunk['text']}'")
     
     analysis_text = "\n".join(chunk_texts)
+
     
     prompt = f"""
 You are an AI assistant specialized in identifying contact information and data in documents that should be removed.
@@ -666,6 +667,8 @@ IMPORTANT: Return ONLY valid JSON array, no markdown formatting or additional te
             ],
             temperature=0.1,  # Low temperature for consistent results
         )
+
+        response.usage()
         
         # Extract the response content
         ai_response = response.choices[0].message.content.strip()
@@ -819,7 +822,7 @@ def pdf_processing(file_path: str, api_key: str):
         # Check if original PDF has more than 3 pages and conditionally remove last page
         original_pdf_size = len(pdf_images)
         if original_pdf_size > 3:
-            final_images = final_images  
+            final_images = final_images[:-1] 
         # Save final PDF
         final_path = f"{file_path}"
         final_images[0].save(final_path, format='PDF', save_all=True, 

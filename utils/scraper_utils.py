@@ -361,7 +361,7 @@ async def download_pdf_links(
         regex_strategy: RegexExtractionStrategy = None , 
         domain_name: str = None,
         api_key: str = None,
-        model: str = "groq/deepseek-r1-distill-llama-70b"
+        model: str = "groq/llama-3.1-8b-instant"
         ):
     
     """
@@ -453,6 +453,8 @@ async def download_pdf_links(
 
         # Step 3: Use LLMExtractionStrategy to identify Data Sheet links from filtered content
         pdf_llm_strategy = get_pdf_llm_strategy(api_key=api_key, model=model)
+
+        
         
         # Process filtered links with LLM to identify PDFs
         pdf_links = []
@@ -510,6 +512,7 @@ async def download_pdf_links(
             return  # Exit early without creating any folders
 
         log_message(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}", "INFO")
+        pdf_llm_strategy.show_usage()
 
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
@@ -616,7 +619,6 @@ async def download_pdf_links(
                             log_message(f"❌ Failed to download: {pdf_url} (Status: {resp.status})", "INFO")
                 except Exception as e:
                     log_message(f"❌ Error downloading {pdf_url}\t: { e}", "ERROR")
-            pdf_llm_strategy.show_usage()
     except Exception as e:
         log_message(f"⚠️ Error During processing  {product_url} pdf : {e}", "ERROR")
 

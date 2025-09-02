@@ -411,7 +411,7 @@ async def download_pdf_links(
         return linkParents;
         """
 
-        product_url = f"{product_url}#documents"
+        product_url = f"{product_url}"
         # Execute JS commands to extract link data
         js_result = await crawler.arun(
             url=product_url,

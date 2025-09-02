@@ -32,6 +32,12 @@ BG_SAMPLE_MARGIN = 40        # Background estimation margin
 RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
+# Footer removal configuration
+FOOTER_HEIGHT_RATIO = 0.15   # Footer height as ratio of page height (15% of page)
+FOOTER_MIN_HEIGHT = 50       # Minimum footer height in pixels
+FOOTER_MAX_HEIGHT = 200      # Maximum footer height in pixels
+FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
+
 # Groq API configuration
 GROQ_MODEL = "openai/gpt-oss-120b"  # Default model for text analysis
 
@@ -63,6 +69,47 @@ def set_ocr_confidence_threshold(threshold: int):
         print(f"✅ OCR confidence threshold set to {threshold}")
     else:
         print(f"❌ Invalid confidence threshold: {threshold}. Must be between 0-100.")
+
+def set_footer_removal_settings(height_ratio: float = None, min_height: int = None, 
+                               max_height: int = None, detection_threshold: float = None):
+    """
+    Configure footer removal settings.
+    
+    Args:
+        height_ratio (float): Footer height as ratio of page height (0.05-0.3)
+        min_height (int): Minimum footer height in pixels (10-100)
+        max_height (int): Maximum footer height in pixels (50-500)
+        detection_threshold (float): Threshold for detecting footer content (0.1-0.8)
+    """
+    global FOOTER_HEIGHT_RATIO, FOOTER_MIN_HEIGHT, FOOTER_MAX_HEIGHT, FOOTER_DETECTION_THRESHOLD
+    
+    if height_ratio is not None:
+        if 0.05 <= height_ratio <= 0.3:
+            FOOTER_HEIGHT_RATIO = height_ratio
+            print(f"✅ Footer height ratio set to {height_ratio}")
+        else:
+            print(f"❌ Invalid height ratio: {height_ratio}. Must be between 0.05-0.3")
+    
+    if min_height is not None:
+        if 10 <= min_height <= 100:
+            FOOTER_MIN_HEIGHT = min_height
+            print(f"✅ Footer minimum height set to {min_height}px")
+        else:
+            print(f"❌ Invalid minimum height: {min_height}. Must be between 10-100px")
+    
+    if max_height is not None:
+        if 50 <= max_height <= 500:
+            FOOTER_MAX_HEIGHT = max_height
+            print(f"✅ Footer maximum height set to {max_height}px")
+        else:
+            print(f"❌ Invalid maximum height: {max_height}. Must be between 50-500px")
+    
+    if detection_threshold is not None:
+        if 0.1 <= detection_threshold <= 0.8:
+            FOOTER_DETECTION_THRESHOLD = detection_threshold
+            print(f"✅ Footer detection threshold set to {detection_threshold}")
+        else:
+            print(f"❌ Invalid detection threshold: {detection_threshold}. Must be between 0.1-0.8")
 
 # Old analyze_text_with_ai function removed - replaced with analyze_text_with_ai_chunks for better context handling
 
@@ -284,6 +331,154 @@ def remove_region(img, bbox, padding=0):
     avg_color = estimate_background_color(img, (x, y, w, h))
     cv2.rectangle(img, (x, y), (x + w, y + h), avg_color, -1)
 
+def detect_footer_area(img_cv):
+    """
+    Detect footer area using multiple techniques to handle OCR-resistant text.
+    Returns the optimal footer height based on content analysis.
+    
+    Args:
+        img_cv: OpenCV image in BGR format
+        
+    Returns:
+        int: Footer height in pixels
+    """
+    height, width = img_cv.shape[:2]
+    
+    # Calculate footer height bounds
+    ratio_height = int(height * FOOTER_HEIGHT_RATIO)
+    footer_height = max(FOOTER_MIN_HEIGHT, min(ratio_height, FOOTER_MAX_HEIGHT))
+    
+    # Method 1: Edge detection to find text boundaries
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    
+    # Apply Gaussian blur to reduce noise
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Edge detection with multiple thresholds
+    edges = cv2.Canny(blurred, 50, 150, apertureSize=3)
+    
+    # Focus on bottom portion of the image
+    bottom_portion = int(height * 0.7)  # Bottom 30% of the image
+    footer_region = edges[bottom_portion:, :]
+    
+    # Method 2: Horizontal projection to detect text lines
+    horizontal_projection = np.sum(footer_region, axis=1)
+    
+    # Find the last significant text line
+    threshold = np.max(horizontal_projection) * FOOTER_DETECTION_THRESHOLD
+    last_text_line = -1
+    
+    # Scan from bottom up to find last significant content
+    for i in range(len(horizontal_projection) - 1, -1, -1):
+        if horizontal_projection[i] > threshold:
+            last_text_line = i
+            break
+    
+    if last_text_line > 0:
+        # Add some padding below the last detected text line
+        detected_footer_height = len(horizontal_projection) - last_text_line + 20
+        footer_height = min(detected_footer_height, footer_height)
+    
+    # Method 3: Color variance analysis for footer detection
+    bottom_region = img_cv[height - footer_height:, :]
+    
+    # Calculate color variance in the bottom region
+    color_variance = np.var(bottom_region, axis=(0, 1))
+    total_variance = np.sum(color_variance)
+    
+    # If variance is very low, it might be mostly background - reduce footer height
+    if total_variance < 100:  # Threshold for low variance
+        footer_height = max(FOOTER_MIN_HEIGHT, int(footer_height * 0.6))
+    
+    # Method 4: Text density analysis
+    # Apply morphological operations to detect text regions
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    morph = cv2.morphologyEx(edges[height - footer_height:, :], cv2.MORPH_CLOSE, kernel)
+    
+    # Count non-zero pixels as text density indicator
+    text_density = np.count_nonzero(morph) / (footer_height * width)
+    
+    # If text density is very low, reduce footer height
+    if text_density < 0.01:  # Less than 1% text density
+        footer_height = max(FOOTER_MIN_HEIGHT, int(footer_height * 0.5))
+    
+    print(f"   📏 Detected footer height: {footer_height}px (text_density: {text_density:.3f}, variance: {total_variance:.1f})")
+    
+    return footer_height
+
+def remove_footer_area(img_cv, page_num):
+    """
+    Remove footer area by replacing it with background color.
+    Handles OCR-resistant text that may be missed by standard text detection.
+    
+    Args:
+        img_cv: OpenCV image in BGR format
+        page_num: Page number for logging
+        
+    Returns:
+        OpenCV image with footer area removed
+    """
+    height, width = img_cv.shape[:2]
+    
+    # Detect optimal footer height
+    footer_height = detect_footer_area(img_cv)
+    
+    # Define footer region
+    footer_start_y = height - footer_height
+    footer_bbox = (0, footer_start_y, width, footer_height)
+    
+    # Estimate background color from multiple areas to get better average
+    # Sample from top, middle, and side margins
+    bg_samples = []
+    
+    # Top margin sample
+    if height > 100:
+        top_sample = img_cv[20:80, width//4:3*width//4]
+        if top_sample.size > 0:
+            bg_samples.append(np.median(top_sample, axis=(0, 1)))
+    
+    # Side margins sample
+    if width > 200:
+        left_sample = img_cv[height//4:3*height//4, 20:60]
+        right_sample = img_cv[height//4:3*height//4, width-60:width-20]
+        if left_sample.size > 0:
+            bg_samples.append(np.median(left_sample, axis=(0, 1)))
+        if right_sample.size > 0:
+            bg_samples.append(np.median(right_sample, axis=(0, 1)))
+    
+    # Use area around footer for background estimation if no other samples
+    if not bg_samples:
+        bg_color = estimate_background_color(img_cv, footer_bbox)
+    else:
+        # Average all background samples
+        bg_color = np.mean(bg_samples, axis=0)
+    
+    # Apply some smoothing to avoid harsh edges
+    # Create a copy for processing
+    result_img = img_cv.copy()
+    
+    # Create a gradient mask for smoother transition (optional)
+    fade_height = min(10, footer_height // 4)  # Fade zone height
+    
+    if fade_height > 0 and footer_start_y - fade_height > 0:
+        # Create gradient mask
+        for i in range(fade_height):
+            y_pos = footer_start_y - fade_height + i
+            alpha = i / fade_height  # Fade from 0 to 1
+            
+            # Blend original color with background color
+            original_line = result_img[y_pos, :].astype(np.float32)
+            background_line = np.full_like(original_line, bg_color, dtype=np.float32)
+            blended_line = (1 - alpha) * original_line + alpha * background_line
+            result_img[y_pos, :] = blended_line.astype(np.uint8)
+    
+    # Fill the footer area with background color
+    cv2.rectangle(result_img, (0, footer_start_y), (width, height), bg_color, -1)
+    
+    print(f"   🦶 Page {page_num}: Removed footer area ({footer_height}px high) with background color {bg_color}")
+    
+    return result_img
+
 def kmeans(input_img, k, i_val):
     """
     Simple K-means implementation for image enhancement
@@ -336,6 +531,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
     Automatically removes contact information using AI analysis.
     Uses K-means enhanced images for OCR, but processes original images.
     Improved approach: processes text in contextual chunks instead of word-by-word.
+    Now includes footer removal for OCR-resistant text.
     """
     modified_images = []
     groq_client = get_groq_client(api_key)
@@ -348,8 +544,14 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
     for page_num, img in enumerate(images, 1):
         print(f"🤖 Processing page {page_num}...")
         
-        # Create enhanced image for OCR (original image unchanged)
-        enhanced_img = enhance_image_for_ocr(img)
+        # Convert to OpenCV format for processing
+        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        
+        # First, remove footer area (handles OCR-resistant text)
+        img_cv = remove_footer_area(img_cv, page_num)
+        
+        # Create enhanced image for OCR (from footer-cleaned image)
+        enhanced_img = enhance_image_for_ocr(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
         
         # Extract text from enhanced image with position data
         data = pytesseract.image_to_data(enhanced_img, output_type=pytesseract.Output.DICT)
@@ -359,7 +561,8 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         if not text_chunks:
             print(f"   Page {page_num}: No text chunks found")
-            modified_images.append(img)  # Keep original image unchanged
+            # Convert back to PIL format and add to results
+            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
             continue
         
         print(f"   Page {page_num}: Created {len(text_chunks)} contextual text chunks")
@@ -369,13 +572,12 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         if not ai_analysis:
             print(f"   Page {page_num}: AI returned no results")
-            modified_images.append(img)  # Keep original image unchanged
+            # Convert back to PIL format and add to results
+            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
             continue
         
         print(f"   Page {page_num}: AI identified {len(ai_analysis)} items to remove")
         
-        # Process text chunks for removal using ORIGINAL image
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         removed_count = 0
         
         # Process AI analysis results
@@ -403,7 +605,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
                 for chunk in matching_chunks:
                     bbox = chunk['bbox']
                     
-                    # Remove the text region from ORIGINAL image
+                    # Remove the text region from image
                     # Use minimal padding for text to fit exactly
                     remove_region(img_cv, bbox, padding=TEXT_PADDING)
                     

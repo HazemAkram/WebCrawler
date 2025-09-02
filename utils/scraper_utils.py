@@ -8,7 +8,6 @@ See NOTICE file for additional terms and conditions.
 """
 
 
-import html
 import json
 import os
 import hashlib
@@ -18,7 +17,7 @@ import traceback
 import aiofiles
 import aiohttp
 
-from typing import List, Set, Tuple, Dict, Any
+from typing import List, Set, Tuple
 from fake_useragent import UserAgent
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -752,7 +751,6 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
     """
     try: 
         # Get pagination configuration
-        from config import DEFAULT_CONFIG
         pagination_config = DEFAULT_CONFIG.get("pagination_settings", {})
         items_per_page = pagination_config.get("items_per_page", 20)
         
@@ -924,7 +922,7 @@ def get_regex_strategy() -> RegexExtractionStrategy:
 
 
 
-def get_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instant") -> LLMExtractionStrategy:
+def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
     """
     Returns the configuration for the language model extraction strategy.
     
@@ -975,7 +973,7 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instan
     )
 
 
-def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instant") -> LLMExtractionStrategy:
+def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
     """
     Returns the configuration for the PDF extraction strategy using LLM.
     

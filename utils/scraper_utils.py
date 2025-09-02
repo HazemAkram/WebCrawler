@@ -421,7 +421,6 @@ async def download_pdf_links(
                 js_code=js_commands,
                 scan_full_page=True,
                 remove_overlay_elements=True,
-                page_timeout=3000,
             )
         )
 
@@ -1226,7 +1225,6 @@ async def fetch_and_process_page(
             session_id=session_id,  # Unique session ID for the crawl
             scan_full_page=True,
             remove_overlay_elements=True,
-            page_timeout=30000,
             verbose=True,  # Enable verbose logging
 
         ),
@@ -1318,7 +1316,7 @@ async def fetch_and_process_page_with_js(
         }});
         console.log(`[JS] Extracted initial page with ${{allRowsData[0].data.length}} rows`);
 
-        await new Promise(r => setTimeout(r, 6000));
+        await new Promise(r => setTimeout(r, 3000));
         // Only attempt pagination if valid button selector exists
         if (buttonSelector && buttonSelector.trim() !== '') {{
             console.log('[JS] Pagination detected. Starting automatic pagination...');
@@ -1364,7 +1362,6 @@ async def fetch_and_process_page_with_js(
         }}
         catch(error){{
             console.log('[JS] Error: ', error);
-            await new Promise(r => setTimeout(r, 30000));
             return error.message;
         }}
     """
@@ -1379,7 +1376,6 @@ async def fetch_and_process_page_with_js(
                 target_elements=elements,
                 scan_full_page=True,
                 remove_overlay_elements=True,
-                page_timeout=30000,
                 session_id="js_extraction_session",
                 js_code=js_commands,
             )

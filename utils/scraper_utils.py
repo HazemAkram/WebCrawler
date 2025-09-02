@@ -479,21 +479,50 @@ async def download_pdf_links(
             extracted_data = json.loads(llm_result.extracted_content)
 
             if llm_result.success and extracted_data:
+                
+                # Server-side validation: Limit to maximum 3 PDFs and filter out certifications
+                validated_pdfs = []
+                certification_keywords = [
+                    'certificate', 'certification', 'certified', 'comply', 'compliance',
+                    'iso', 'tse', 'ce', 'rohs', 'reach', 'fcc', 'ul', 'csa', 'etl',
+                    'quality', 'qa', 'qc', 'audit', 'approval', 'conform', 'conformity',
+                    'safety', 'environmental', 'calibration', 'test-report',
+                    'declaration', 'attestation', 'validation', 'verification',
+                    'standard', 'norm', 'regulation', 'directive'
+                ]
 
                 for item in extracted_data: 
-                    pdf_url = item['url']
+                    # Stop if we already have 3 PDFs
+                    if len(validated_pdfs) >= 3:
+                        log_message(f"📊 Reached maximum limit of 3 PDFs, stopping validation", "INFO")
+                        break
                     
-                        # Convert relative URLs to absolute
+                    pdf_url = item['url']
+                    pdf_text = item.get('text', '').lower()
+                    pdf_type = item.get('type', '').lower()
+                    
+                    # Server-side certification filter
+                    is_certification = any(keyword in pdf_text or keyword in pdf_type or keyword in pdf_url.lower() 
+                                         for keyword in certification_keywords)
+                    
+                    if is_certification:
+                        log_message(f"🚫 Rejected certification document: {item.get('text', 'Unknown')}", "INFO")
+                        continue
+                    
+                    # Convert relative URLs to absolute
                     if not (pdf_url.startswith("https://") or pdf_url.startswith("http://") or pdf_url.startswith("www")):
                         pdf_url = f"https://{domain_name}{pdf_url}"
+                        item['url'] = pdf_url  # Update the item with the corrected URL
                     
                     # Check for duplicates within this page
                     if pdf_url not in seen_pdf_urls_in_page:
-                        pdf_links.append(item)
+                        validated_pdfs.append(item)
                         seen_pdf_urls_in_page.add(pdf_url)
-                       
+                        log_message(f"✅ Validated PDF ({len(validated_pdfs)}/3): {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
                     else: 
-                        log_message(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {pdf_url}", "INFO")
+                        log_message(f"⏭️ Skipping duplicate PDF URL: {pdf_url}", "INFO")
+                
+                pdf_links = validated_pdfs
 
             else: 
                 log_message(f"❌ No content extracted via LLM", "ERROR")
@@ -521,10 +550,43 @@ async def download_pdf_links(
             os.makedirs(productPath)
 
 
-        # Sort PDFs by priority: High (English Data Sheets) > Medium (Technical Drawings) > Low (Non-English Data Sheets)
-        pdf_links.sort(key=lambda x: {'High': 3, 'Medium': 2, 'Low': 1}.get(x.get('priority', 'Unknown'), 0), reverse=True)
+        # Enhanced sorting: Priority first, then by document type preference, then by language
+        def sort_key(pdf):
+            priority_score = {'High': 3, 'Medium': 2, 'Low': 1}.get(pdf.get('priority', 'Unknown'), 0)
+            
+            # Type preference: Data Sheet > Technical Drawing > Manual
+            type_score = 0
+            pdf_type = pdf.get('type', '').lower()
+            if 'data sheet' in pdf_type or 'datasheet' in pdf_type or 'specification' in pdf_type:
+                type_score = 3
+            elif 'drawing' in pdf_type or 'dimensional' in pdf_type:
+                type_score = 2
+            elif 'manual' in pdf_type or 'guide' in pdf_type:
+                type_score = 1
+            
+            # Language preference: English > German > Turkish > Others
+            language_score = 0
+            pdf_language = pdf.get('language', '').lower()
+            if 'english' in pdf_language:
+                language_score = 4
+            elif 'german' in pdf_language or 'deutsch' in pdf_language:
+                language_score = 3
+            elif 'turkish' in pdf_language or 'türkçe' in pdf_language:
+                language_score = 2
+            else:
+                language_score = 1
+            
+            return (priority_score, type_score, language_score)
         
-        log_message(f"📊 Processing {len(pdf_links)} technical documents by priority", "INFO")
+        pdf_links.sort(key=sort_key, reverse=True)
+        
+        log_message(f"📊 Processing {len(pdf_links)} validated technical documents (max 3) by priority", "INFO")
+        
+        # Log selected document summary
+        if pdf_links:
+            log_message("📋 Selected documents:", "INFO")
+            for i, pdf in enumerate(pdf_links, 1):
+                log_message(f"   {i}. {pdf.get('type', 'Unknown')} ({pdf.get('language', 'Unknown')}) - Priority: {pdf.get('priority', 'Unknown')}", "INFO")
         
         # Download each PDF with duplicate checking (SSL verification disabled)
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
@@ -1000,49 +1062,72 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-dis
         schema=PDF.model_json_schema(),
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
-            "You are given HTML content that contains various links and elements from a product page. "
-            "Your Task is toExtract technical PDF documents from the provided HTML content. Focus ONLY on downloadable PDF files that contain technical specifications or data.\n\n"
+            "You are a technical document specialist tasked with extracting ONLY the most valuable technical PDF documents from product pages. "
+            "Your goal is to find the TOP 3 MOST IMPORTANT technical documents while strictly avoiding certifications.\n\n"
             
-            "   REQUIRED FIELDS:\n"
-            "- url: Direct download link to the PDF file\n"
-            "- text: Descriptive text/label of the document\n"
-            "- type: Document category (Data Sheet, Technical Drawing, Manual, etc.)\n"
-            "- language: Document language (English, German, Turkish, etc.)\n"
-            "- priority: High/Medium/Low based on document importance\n\n"
+            "🚨 CRITICAL LIMITATIONS:\n"
+            "- MAXIMUM 3 PDFs ONLY - Select the most valuable ones\n"
+            "- ZERO TOLERANCE for certifications, certificates, or compliance documents\n"
+            "- Focus on core technical content that engineers need\n\n"
             
-            "🎯 PRIORITY CLASSIFICATION:\n"
-            "- HIGH: English Data Sheets, Technical Specifications, Product Specs\n"
-            "- MEDIUM: Technical Drawings, Installation Manuals, Non-English Data Sheets\n"
-            "- LOW: Operation Manuals, Maintenance Manuals, Service Manuals\n\n"
+            "🎯 PRIORITY RANKING (Select top 3 in this order):\n"
+            "1. HIGH PRIORITY: English Technical Data Sheets, Product Specifications\n"
+            "2. MEDIUM PRIORITY: Technical Drawings, Dimensional Drawings, Installation Manuals\n"
+            "3. LOW PRIORITY: Operation Manuals, Maintenance Manuals (only if no higher priority available)\n\n"
             
-            "✅ INCLUDE:\n"
-            "- Data Sheets / Datasheets (preferably English)\n"
-            "- Technical Drawings with clear technical content\n"
-            "- Product Specifications and Technical Specifications\n"
-            "- Installation and Operation Manuals\n"
-            "- Maintenance and Service Manuals\n\n"
+            "✅ MUST INCLUDE (if available, max 3 total):\n"
+            "- Technical Data Sheets (datasheet, technical specs, product specs)\n"
+            "- Dimensional/Technical Drawings (CAD drawings, technical drawings)\n"
+            "- Installation/Assembly Manuals (installation guide, assembly instructions)\n"
+            "- Operation Manuals (operation guide, user manual) - only if nothing better available\n\n"
             
-            "❌ EXCLUDE:\n"
-            "- Brochures, Catalogs, Flyers (marketing materials)\n"
-            "- Certificates and Certifications and ISO Standards\n"
-            "- Configurators and Configuration Tools\n"
-            "- CAD files, 3D models, Design files\n"
-            "- User Guides and Quick Start Guides\n"
-            "- Application Notes, White Papers\n"
-            "- Press Releases, News Articles\n"
-            "- Non-PDF file formats\n\n"
+            "🚫 STRICTLY FORBIDDEN - NEVER INCLUDE:\n"
+            "- ANY certificates, certifications, or compliance documents\n"
+            "- ISO standards, ISO certificates, ISO compliance\n"
+            "- TSE certificates, TSE standards, TSE compliance\n"
+            "- CE certificates, CE marking, CE compliance\n"
+            "- Quality certificates, quality assurance documents\n"
+            "- Safety certificates, safety compliance documents\n"
+            "- Environmental certificates (RoHS, REACH, etc.)\n"
+            "- Calibration certificates\n"
+            "- Test certificates, test reports from certification bodies\n"
+            "- Conformity declarations, declarations of conformity\n"
+            "- Approval certificates, approval documents\n"
+            "- Brochures, marketing materials, catalogs\n"
+            "- Press releases, news articles\n"
+            "- Application notes, white papers\n"
+            "- Quick start guides, getting started guides\n"
+            "- CAD files, 3D models (non-PDF formats)\n"
+            "- Software tools, configurators\n\n"
             
-            "   EXTRACTION RULES:\n"
-            "1. If the url is incomplete, complete the url with the domain\n"
-            "2. Only extract links that are direct PDF downloads\n"
-            "3. Verify the link points to a .pdf file or has PDF content\n"
-            "4. Prioritize English versions when multiple languages exist\n"
-            "5. Ignore duplicate links within the same page\n"
-            "6. Ensure the document is technical, not promotional\n"
-            "7. If no suitable documents found, return empty list\n\n"
+            "🔍 DETECTION KEYWORDS TO AVOID:\n"
+            "If ANY of these words appear in the link text or URL, REJECT the document:\n"
+            "- certificate, certification, certified, comply, compliance\n"
+            "- ISO, TSE, CE, RoHS, REACH, FCC, UL, CSA, ETL\n"
+            "- quality, QA, QC, audit, approval, conform, conformity\n"
+            "- safety, environmental, calibration, test-report\n"
+            "- declaration, attestation, validation, verification\n"
+            "- standard, norm, regulation, directive\n\n"
             
-            "   OUTPUT FORMAT:\n"
-            "Return a JSON array of technical documents matching the schema. Each document should have all required fields properly populated."
+            "📋 REQUIRED FIELDS:\n"
+            "- url: Complete download URL to the PDF file\n"
+            "- text: Exact descriptive text from the webpage\n"
+            "- type: Document category (Data Sheet, Technical Drawing, Installation Manual, Operation Manual)\n"
+            "- language: Document language (English preferred, then German, Turkish, etc.)\n"
+            "- priority: High/Medium/Low based on technical value\n\n"
+            
+            "⚡ EXTRACTION RULES:\n"
+            "1. MAXIMUM 3 documents - be highly selective\n"
+            "2. If URL is incomplete, complete it with the domain\n"
+            "3. Prioritize English documents over other languages\n"
+            "4. Prefer data sheets and technical drawings over manuals\n"
+            "5. Double-check that NO certification-related keywords exist\n"
+            "6. If fewer than 3 suitable documents exist, return only those found\n"
+            "7. If ALL documents are certifications, return EMPTY ARRAY\n\n"
+            
+            "📤 OUTPUT FORMAT:\n"
+            "Return a JSON array with MAXIMUM 3 technical documents. Each must have all required fields. "
+            "If no suitable non-certification documents are found, return an empty array []."
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging

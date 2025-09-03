@@ -12,14 +12,11 @@ from flask import Flask, render_template, request, jsonify, send_file, send_from
 import os
 import asyncio
 import threading
-import time
-import json
 from werkzeug.utils import secure_filename
 import tempfile
 import shutil
 from datetime import datetime
 import secrets
-import mimetypes
 from pathlib import Path
 
 # Import the crawling functions

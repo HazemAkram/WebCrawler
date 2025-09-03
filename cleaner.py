@@ -33,7 +33,7 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # Footer removal configuration
-FOOTER_HEIGHT_RATIO = 0.15   # Footer height as ratio of page height (15% of page)
+FOOTER_HEIGHT_RATIO = 0.20   # Footer height as ratio of page height (15% of page)
 FOOTER_MIN_HEIGHT = 50       # Minimum footer height in pixels
 FOOTER_MAX_HEIGHT = 200      # Maximum footer height in pixels
 FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
@@ -966,18 +966,30 @@ def remove_qr_codes_from_pdf(images):
 
 
 
-def pdf_processing(file_path: str, api_key: str):
+def pdf_processing(file_path: str, api_key: str, log_callback=None):
     """
     Main processing pipeline: AI-powered text removal -> QR removal -> Save PDF
     No longer requires search_text_list parameter - fully automated with AI.
+    
+    Args:
+        file_path (str): Path to the PDF file to process
+        api_key (str): API key for AI processing
+        log_callback (function): Optional callback function for logging to web interface
     """
+    def log_message(message, level="INFO"):
+        """Helper function to log messages either to callback or console"""
+        if log_callback:
+            log_callback(message, level)
+        else:
+            print(f"[{level}] {message}")
+    
     # Setup dependencies
     tesseract_path, poppler_path = setup_dependencies()
     if not tesseract_path:
-        print("❌ Cannot proceed without Tesseract. Please install Tesseract OCR.")
+        log_message("❌ Cannot proceed without Tesseract. Please install Tesseract OCR.", "ERROR")
         return
     if not poppler_path:
-        print("❌ Cannot proceed without Poppler. Please install Poppler.")
+        log_message("❌ Cannot proceed without Poppler. Please install Poppler.", "ERROR")
         return
     
     try:
@@ -986,16 +998,18 @@ def pdf_processing(file_path: str, api_key: str):
             poppler_path=poppler_path,
         )
     except Exception as e:
-        print(f"❌ Error converting PDF to images: {str(e)}")
+        log_message(f"❌ Error converting PDF to images: {str(e)}", "ERROR")
         return
     
     # Processing pipeline
     try:
         print("🤖 Starting text removal...")
         text_removed = replace_text_in_scanned_pdf_ai(pdf_images, api_key)
+        log_message("✅ Text removal completed", "INFO")
         
         print("🔍 Starting QR code removal...")
         final_images = remove_qr_codes_from_pdf(text_removed)
+        log_message("✅ QR code removal completed", "INFO")
         
         # Add cover page with smart resizing
         if os.path.exists("cover.png"):
@@ -1018,7 +1032,7 @@ def pdf_processing(file_path: str, api_key: str):
                 # If no pages to compare, just add cover as is
                 final_images.insert(0, cover)
         else:
-            print("⚠️ cover.png not found, skipping cover page")
+            log_message("⚠️ cover.png not found, skipping cover page", "WARNING")
         
         # Check if original PDF has more than 3 pages and conditionally remove last page
         original_pdf_size = len(pdf_images)
@@ -1031,7 +1045,7 @@ def pdf_processing(file_path: str, api_key: str):
         print(f"✨ Cleaned PDF saved to: {final_path}")
         
     except Exception as e:
-        print(f"❌ Error during PDF processing: {str(e)}")
+        log_message(f"❌ Error during PDF processing: {str(e)}", "ERROR")
         return
     
     

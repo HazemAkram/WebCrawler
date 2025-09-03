@@ -12,7 +12,8 @@ import json
 import os
 import hashlib
 import traceback
-
+import asyncio
+import gc 
 
 import aiofiles
 import aiohttp
@@ -47,6 +48,11 @@ from config import DEFAULT_CONFIG
 load_dotenv()
 
 log_callback = None
+
+def set_log_callback(callback):
+    """Set the logging callback function for web interface integration"""
+    global log_callback
+    log_callback = callback
 
 # Get PDF size limit from configuration
 MAX_SIZE_MB = DEFAULT_CONFIG.get("pdf_settings", {}).get("max_file_size_mb", 10)
@@ -356,6 +362,7 @@ async def download_pdf_links(
         product_url: str, 
         product_name: str,
         output_folder: str, 
+
         session_id="pdf_download_session", 
         regex_strategy: RegexExtractionStrategy = None , 
         domain_name: str = None,
@@ -411,7 +418,7 @@ async def download_pdf_links(
         return linkParents;
         """
 
-        product_url = f"{product_url}"
+        product_url = f"{product_url}#documents"
         # Execute JS commands to extract link data
         js_result = await crawler.arun(
             url=product_url,
@@ -424,7 +431,7 @@ async def download_pdf_links(
             )
         )
 
-        if not js_result.success or not js_result.js_execution_result:
+        if not js_result.js_execution_result:
             log_message("❌ Failed to execute JS commands for PDF extraction", "ERROR")
             return
 
@@ -588,15 +595,17 @@ async def download_pdf_links(
                 log_message(f"   {i}. {pdf.get('type', 'Unknown')} ({pdf.get('language', 'Unknown')}) - Priority: {pdf.get('priority', 'Unknown')}", "INFO")
         
         # Download each PDF with duplicate checking (SSL verification disabled)
+        log_message(f"📥 Starting download of {len(pdf_links)} PDF documents", "INFO")
+        
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-            for pdf_info in pdf_links:
+            for i, pdf_info in enumerate(pdf_links, 1):
                 pdf_url = pdf_info['url']
                 pdf_text = pdf_info['text']
                 pdf_type = pdf_info['type']
                 pdf_language = pdf_info.get('language', 'Unknown')
                 pdf_priority = pdf_info.get('priority', 'Unknown')
                 priority_emoji = "🔴" if pdf_priority == 'High' else "🟡" if pdf_priority == 'Medium' else "🟢"
-                log_message(f"{priority_emoji} Processing {pdf_type} ({pdf_language}) - {pdf_text}", "READING")
+                log_message(f"{priority_emoji} Downloading PDF {i}/{len(pdf_links)}", "INFO")
                 # Enhanced filename generation for extensionless URLs
                 filename = generate_pdf_filename(pdf_url, product_name)
                 save_path = os.path.join(productPath, filename)
@@ -672,13 +681,18 @@ async def download_pdf_links(
                             download_pdf_links.downloaded_pdfs.add(pdf_url)
 
 
-                            # AI-powered PDF cleaning - no manual search text needed
-                            pdf_processing(file_path=save_path, api_key=api_key)
-                            log_message(f"\t✅ Downloaded {pdf_type} ({pdf_language}): {save_path}", "INFO")
+                            # AI-powered PDF cleaning with web interface logging
+                            log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
+                            try:
+                                # pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
+                                log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
+                            except Exception as clean_error:
+                                log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")
+                                log_message(f"📄 Original PDF preserved: {os.path.basename(save_path)}", "INFO")
                         else:
-                            log_message(f"❌ Failed to download: {pdf_url} (Status: {resp.status})", "INFO")
+                            log_message(f"❌ Failed to download: {pdf_url} (Status: {resp.status})", "ERROR")
                 except Exception as e:
-                    log_message(f"❌ Error downloading {pdf_url}\t: { e}", "ERROR")
+                    log_message(f"❌ Error downloading {pdf_url}: {str(e)}", "ERROR")
     except Exception as e:
         log_message(f"⚠️ Error During processing  {product_url} pdf : {e}", "ERROR")
 
@@ -960,11 +974,19 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_width = 1080,  # Width of the browser viewport
         viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
         user_agent = user_agent,  # Custom headers to include
+        extra_args=[
+            "--no-sandbox",
+            "--disable-dev_shm-usage",
+            "--disable-gpu",
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+            "--max_old_space_size=4096",
+        ]
     )
 
 
@@ -1065,6 +1087,7 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-dis
             "Your goal is to find the TOP 3 MOST IMPORTANT technical documents while strictly avoiding certifications.\n\n"
             
             "🚨 CRITICAL LIMITATIONS:\n"
+            "- At least 2 PDFs should be Downloaded\n"
             "- MAXIMUM 3 PDFs ONLY - Select the most valuable ones\n"
             "- ZERO TOLERANCE for certifications, certificates, or compliance documents\n"
             "- Focus on core technical content that engineers need\n\n"
@@ -1121,11 +1144,11 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-dis
             "3. Prioritize English documents over other languages\n"
             "4. Prefer data sheets and technical drawings over manuals\n"
             "5. Double-check that NO certification-related keywords exist\n"
-            "6. If fewer than 3 suitable documents exist, return only those found\n"
+            "6. If fewer than 2 suitable documents exist, return only those found\n"
             "7. If ALL documents are certifications, return EMPTY ARRAY\n\n"
             
             "📤 OUTPUT FORMAT:\n"
-            "Return a JSON array with MAXIMUM 3 technical documents. Each must have all required fields. "
+            "Return a JSON array with MINIMUM 2 technical documents. Each must have all required fields. "
             "If no suitable non-certification documents are found, return an empty array []."
         ),
         input_format="markdown",  # Format of the input content
@@ -1288,6 +1311,8 @@ async def fetch_and_process_page_with_js(
     JS-based extraction for sites with dynamic pagination. Extracts product rows using JS, then applies LLM extraction per page.
     Returns (venues, no_results) just like fetch_and_process_page.
     """
+
+
     js_commands = f"""
         console.log('[JS] Starting data extraction...');
         let allRowsData = [];
@@ -1389,9 +1414,6 @@ async def fetch_and_process_page_with_js(
             else:
                 js_extracted_content = results.js_execution_result
 
-        with open("js_extracted_content.txt", "w") as f:
-            f.write(str(js_extracted_content))
-
         if not js_extracted_content:
             log_message("No content extracted via JS", "INFO")
             return [], True
@@ -1407,6 +1429,7 @@ async def fetch_and_process_page_with_js(
                     session_id=session_id
                 )
             )
+
             if not result.extracted_content:
                 log_message(f"\tNo content extracted for page {items['page']}", "INFO")
                 continue

@@ -255,14 +255,14 @@ def filter_pdf_links(link_items: List[dict], domain_name: str = None) -> List[di
             'manual', 'guide', 'documentation', 'catalog', 'brochure', 'drawing', 'diagram', 'scheme',
             'certificate', 'certification', 'test', 'report', 'analysis', 'study', 'white-paper',
             'application-note', 'app-note', 'installation', 'operation', 'maintenance', 'service',
-            'user-guide', 'quick-start', 'reference', 'handbook', 'instruction', 'procedure'
+            'user-guide', 'quick-start', 'reference', 'handbook', 'instruction', 'procedure','DocumentDownload'
         ],
         'text_keywords': [
             'pdf', 'datasheet', 'data sheet', 'technical', 'specification', 'manual', 'guide',
             'documentation', 'catalog', 'brochure', 'drawing', 'diagram', 'certificate', 'test',
             'report', 'analysis', 'study', 'white paper', 'application note', 'installation',
             'operation', 'maintenance', 'service', 'user guide', 'quick start', 'reference',
-            'handbook', 'instruction', 'procedure', 'download', 'view', 'open', 'read'
+            'handbook', 'instruction', 'procedure', 'download', 'view', 'open', 'read','download',
         ]
     }
     
@@ -294,6 +294,9 @@ def filter_pdf_links(link_items: List[dict], domain_name: str = None) -> List[di
         r'brochure[_-]',  # Brochure with underscore or hyphen
         r'drawing[_-]',  # Drawing with underscore or hyphen
         r'diagram[_-]',  # Diagram with underscore or hyphen
+        r'DocumentDownload[_-]',  # Document download with underscore or hyphen 
+        r'document[_-]',  # Document with underscore or hyphen
+        r'download[_-]',  # Document download with underscore or hyphen
         r'certificate[_-]',  # Certificate with underscore or hyphen
         r'test[_-]',  # Test with underscore or hyphen
         r'report[_-]',  # Report with underscore or hyphen
@@ -431,6 +434,10 @@ async def download_pdf_links(
             )
         )
 
+
+        # with open('js_result.json', 'w') as f:
+        #     json.dump(js_result.js_execution_result, f)
+
         if not js_result.js_execution_result:
             log_message("❌ Failed to execute JS commands for PDF extraction", "ERROR")
             return
@@ -490,8 +497,8 @@ async def download_pdf_links(
                 validated_pdfs = []
                 certification_keywords = [
                     'certificate', 'certification', 'certified', 'comply', 'compliance',
-                    'iso', 'tse', 'ce', 'rohs', 'reach', 'fcc', 'ul', 'csa', 'etl',
-                    'quality', 'qa', 'qc', 'audit', 'approval', 'conform', 'conformity',
+                    'iso', 'tse',  'rohs', 'reach', 'etl',
+                    'quality', 'audit', 'approval', 'conform', 'conformity',
                     'safety', 'environmental', 'calibration', 'test-report',
                     'declaration', 'attestation', 'validation', 'verification',
                     'standard', 'norm', 'regulation', 'directive'

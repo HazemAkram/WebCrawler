@@ -37,8 +37,8 @@ OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 =
 OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
-FOOTER_HEIGHT_RATIO = 0.7  # Footer height as ratio of page height (15% of page)
-FOOTER_MIN_HEIGHT = 50       # Minimum footer height in pixels
+FOOTER_HEIGHT_RATIO = 0.3  # Footer height as ratio of page height (15% of page)
+FOOTER_MIN_HEIGHT = 1      # Minimum footer height in pixels
 FOOTER_MAX_HEIGHT = 200      # Maximum footer height in pixels
 FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
 

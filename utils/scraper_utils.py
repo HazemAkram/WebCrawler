@@ -245,25 +245,27 @@ async def download_pdf_links(
         regex_strategy: RegexExtractionStrategy = None , 
         domain_name: str = None,
         api_key: str = None,
+        cat_name: str = "Uncategorized",
         ):
     
     """
     Opens the given product page and uses CSS selector to target PDF links.
     Uses LLMExtractionStrategy to identify and extract technical PDF documents,
     then downloads them. Prevents downloading duplicate PDFs by checking existing files.
-    Only creates a product folder if PDFs are actually found.
+    Creates a category-based folder structure: output/{category}/{product}
     
     Args:
         crawler: The AsyncWebCrawler instance
         product_url: URL of the product page
         product_name: Name of the product for folder creation
         output_folder: Base output directory for downloads
+        pdf_llm_strategy: LLM extraction strategy for PDF processing
         pdf_selector: CSS selector to target PDF link elements
         session_id: Session identifier for crawling
         regex_strategy: Optional regex extraction strategy (unused)
         domain_name: Domain name for URL completion
         api_key: API key for LLM provider
-        model: LLM model to use for extraction
+        cat_name: Category name from CSV for folder organization (defaults to "Uncategorized")
     """
 
 
@@ -357,9 +359,15 @@ async def download_pdf_links(
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
 
-        productPath = output_folder + f'/{sanitize_folder_name(product_name)}' 
+        # Create category-based folder structure: output/{category}/{product}
+        sanitized_cat_name = sanitize_folder_name(cat_name)
+        category_path = os.path.join(output_folder, sanitized_cat_name)
+        os.makedirs(category_path, exist_ok=True)
+        
+        productPath = os.path.join(category_path, sanitize_folder_name(product_name))
         if not os.path.exists(productPath):
             os.makedirs(productPath)
+            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(product_name)}", "INFO")
 
 
         # Enhanced sorting: Priority first, then by document type preference, then by language

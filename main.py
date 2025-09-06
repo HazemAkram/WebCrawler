@@ -63,6 +63,7 @@ def read_sites_from_csv(input_file):
         for row in reader:
             sites.append({
                 "url": row["url"],
+                "cat_name": row.get("cat_name", "Uncategorized"),  # Add category name from CSV
                 "css_selector": [s.strip() for s in row['css_selector'].split('|') if s.strip()],
                 "pdf_selector": [s.strip() for s in row['pdf_selector'].split('|') if s.strip()],  # Add pdf_selector with fallback
                 "button_selector": row["button_selector"],
@@ -113,7 +114,6 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
 
     sites = read_sites_from_csv(input_file)
     log_message(f"Loaded {len(sites)} sites to crawl.", "INFO")
-    log_message(f"Site: {sites}", "INFO")
 
     # Update status for web interface
     if status_callback:
@@ -236,6 +236,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 domain_name=domain_name,
                                 pdf_llm_strategy=pdf_llm_strategy,
                                 api_key=api_key,
+                                cat_name=site["cat_name"],  # Add category name for folder organization
                             )
                             products_processed_with_pdf_crawler += 1
                             

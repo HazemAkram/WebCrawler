@@ -233,152 +233,37 @@ def sanitize_filename(filename: str) -> str:
     return sanitized
 
 
-def filter_pdf_links(link_items: List[dict], domain_name: str = None) -> List[dict]:
-    """
-    Filter link items to identify potential PDF links before sending to LLM.
-    This reduces the message length and improves LLM processing efficiency.
-    
-    Args:
-        link_items (List[dict]): List of link items from JS extraction
-        domain_name (str): Domain name for URL completion
-        
-    Returns:
-        List[dict]: Filtered list of potential PDF links
-    """
-    if not link_items:
-        return []
-    
-    # PDF-related keywords and patterns
-    pdf_keywords = {
-        'url_keywords': [
-            'pdf', 'datasheet', 'data-sheet', 'data_sheet', 'datasheet', 'technical', 'spec', 'specification',
-            'manual', 'guide', 'documentation', 'catalog', 'brochure', 'drawing', 'diagram', 'scheme',
-            'certificate', 'certification', 'test', 'report', 'analysis', 'study', 'white-paper',
-            'application-note', 'app-note', 'installation', 'operation', 'maintenance', 'service',
-            'user-guide', 'quick-start', 'reference', 'handbook', 'instruction', 'procedure','DocumentDownload'
-        ],
-        'text_keywords': [
-            'pdf', 'datasheet', 'data sheet', 'technical', 'specification', 'manual', 'guide',
-            'documentation', 'catalog', 'brochure', 'drawing', 'diagram', 'certificate', 'test',
-            'report', 'analysis', 'study', 'white paper', 'application note', 'installation',
-            'operation', 'maintenance', 'service', 'user guide', 'quick start', 'reference',
-            'handbook', 'instruction', 'procedure', 'download', 'view', 'open', 'read','download',
-        ]
-    }
-    
-    # Industrial/manufacturing specific patterns
-    industrial_patterns = [
-        r'datasheet|data[-_]sheet|technical[-_]spec|product[-_]spec',
-        r'installation[-_]manual|operation[-_]manual|maintenance[-_]manual',
-        r'user[-_]guide|quick[-_]start|reference[-_]manual',
-        r'certificate|certification|test[-_]report|analysis[-_]report',
-        r'drawing|diagram|scheme|technical[-_]drawing',
-        r'application[-_]note|app[-_]note|white[-_]paper',
-        r'product[-_]catalog|technical[-_]catalog|brochure',
-        r'installation[-_]guide|setup[-_]guide|configuration[-_]guide',
-        r'operation[-_]guide|maintenance[-_]guide|service[-_]guide',
-        r'technical[-_]documentation|product[-_]documentation'
-    ]
-    
-    # Common PDF/datasheet patterns
-    pdf_patterns = [
-        r'\.pdf$',  # Direct PDF extension
-        r'pdf[_-]',  # PDF with underscore or hyphen
-        r'datasheet[_-]',  # Datasheet with underscore or hyphen
-        r'technical[_-]',  # Technical with underscore or hyphen
-        r'spec[_-]',  # Spec with underscore or hyphen
-        r'manual[_-]',  # Manual with underscore or hyphen
-        r'guide[_-]',  # Guide with underscore or hyphen
-        r'document[_-]',  # Document with underscore or hyphen
-        r'catalog[_-]',  # Catalog with underscore or hyphen
-        r'brochure[_-]',  # Brochure with underscore or hyphen
-        r'drawing[_-]',  # Drawing with underscore or hyphen
-        r'diagram[_-]',  # Diagram with underscore or hyphen
-        r'DocumentDownload[_-]',  # Document download with underscore or hyphen 
-        r'document[_-]',  # Document with underscore or hyphen
-        r'download[_-]',  # Document download with underscore or hyphen
-        r'certificate[_-]',  # Certificate with underscore or hyphen
-        r'test[_-]',  # Test with underscore or hyphen
-        r'report[_-]',  # Report with underscore or hyphen
-        r'analysis[_-]',  # Analysis with underscore or hyphen
-        r'study[_-]',  # Study with underscore or hyphen
-        r'white[_-]paper[_-]',  # White paper with underscore or hyphen
-        r'application[_-]note[_-]',  # Application note with underscore or hyphen
-        r'installation[_-]',  # Installation with underscore or hyphen
-        r'operation[_-]',  # Operation with underscore or hyphen
-        r'maintenance[_-]',  # Maintenance with underscore or hyphen
-        r'service[_-]',  # Service with underscore or hyphen
-        r'user[_-]guide[_-]',  # User guide with underscore or hyphen
-        r'quick[_-]start[_-]',  # Quick start with underscore or hyphen
-        r'reference[_-]',  # Reference with underscore or hyphen
-        r'handbook[_-]',  # Handbook with underscore or hyphen
-        r'instruction[_-]',  # Instruction with underscore or hyphen
-        r'procedure[_-]'  # Procedure with underscore or hyphen
-    ]
-    
-    filtered_links = []
-    
-    for link_item in link_items:
-        original_href = link_item.get('originalHref', '').lower()
-        link_text = link_item.get('linkText', '').lower()
-        
-        # Skip empty or invalid links
-        if not original_href or original_href == '#' or original_href == 'javascript:void(0)':
-            continue
-        
-        # 1. Check for .pdf extension
-        if original_href.endswith('.pdf'):
-            filtered_links.append(link_item)
-            continue
-        
-        # 2. Check for PDF-related keywords in URL
-        url_contains_pdf_keyword = any(keyword in original_href for keyword in pdf_keywords['url_keywords'])
-        if url_contains_pdf_keyword:
-            filtered_links.append(link_item)
-            continue
-        
-        # 3. Check for PDF-related keywords in link text
-        text_contains_pdf_keyword = any(keyword in link_text for keyword in pdf_keywords['text_keywords'])
-        if text_contains_pdf_keyword:
-            filtered_links.append(link_item)
-            continue
-        
-        # 4. Check for common PDF/datasheet patterns
-        for pattern in pdf_patterns:
-            if re.search(pattern, original_href, re.IGNORECASE):
-                filtered_links.append(link_item)
-                break
-        else:
-            # 5. Check for industrial/manufacturing specific patterns
-            for pattern in industrial_patterns:
-                if re.search(pattern, original_href, re.IGNORECASE) or re.search(pattern, link_text, re.IGNORECASE):
-                    filtered_links.append(link_item)
-                    break
-    
-    log_message(f"🔍 Filtered {len(link_items)} links down to {len(filtered_links)} potential PDF links", "INFO")
-    return filtered_links
-
-
 # https://www.ors.com.tr/en/tek-sirali-sabit-bilyali-rulmanlar
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
         product_url: str, 
         product_name: str,
         output_folder: str, 
-
+        pdf_llm_strategy: LLMExtractionStrategy,
+        pdf_selector: str,
         session_id="pdf_download_session", 
         regex_strategy: RegexExtractionStrategy = None , 
         domain_name: str = None,
         api_key: str = None,
-        model: str = "groq/llama-3.1-8b-instant"
         ):
     
     """
-    Opens the given product page, uses JS_Commands to extract parent elements of <a> tags,
-    filters the links to identify potential PDFs using comprehensive pattern matching,
-    then uses LLMExtractionStrategy to identify Data Sheet links, and downloads them.
-    Prevents downloading duplicate PDFs by checking existing files.
+    Opens the given product page and uses CSS selector to target PDF links.
+    Uses LLMExtractionStrategy to identify and extract technical PDF documents,
+    then downloads them. Prevents downloading duplicate PDFs by checking existing files.
     Only creates a product folder if PDFs are actually found.
+    
+    Args:
+        crawler: The AsyncWebCrawler instance
+        product_url: URL of the product page
+        product_name: Name of the product for folder creation
+        output_folder: Base output directory for downloads
+        pdf_selector: CSS selector to target PDF link elements
+        session_id: Session identifier for crawling
+        regex_strategy: Optional regex extraction strategy (unused)
+        domain_name: Domain name for URL completion
+        api_key: API key for LLM provider
+        model: LLM model to use for extraction
     """
 
 
@@ -389,162 +274,77 @@ async def download_pdf_links(
         download_pdf_links.downloaded_pdfs = set()
 
     try:
-        # Step 1: Use JS_Commands to extract parent elements of <a> tags
-        js_commands = """
-        console.log('[JS] Starting PDF link extraction...');
-        
-        // Find all <a> tags and extract their parent elements
-        const allLinks = document.querySelectorAll('a');
-        const linkParents = [];
-        
-        allLinks.forEach((link, index) => {
-            if (link.href && link.href.trim() !== '') {
-                // Get the parent element (could be div, li, td, etc.)
-                const parent = link.parentElement;
-                if (parent) {
-                    // Create a container with the parent element and the link
-                    const container = document.createElement('div');
-                    container.className = 'link-container';
-                    container.appendChild(parent.cloneNode(true));
-                    
-                    linkParents.push({
-                        index: index,
-                        html: container.outerHTML,
-                        originalHref: link.href,
-                        linkText: link.textContent.trim()
-                    });
-                }
-            }
-        });
-        
-        console.log(`[JS] Extracted ${linkParents.length} link parent elements`);
-        return linkParents;
-        """
+        log_message(f"🔍 Starting PDF extraction for product: {product_name}", "INFO")
+        log_message(f"📍 Using pdf selector: {pdf_selector}", "INFO")
+
 
         product_url = f"{product_url}#documents"
-        # Execute JS commands to extract link data
-        js_result = await crawler.arun(
+        # Crawl the page with CSS selector targeting PDF links
+        pdf_result = await crawler.arun(
             url=product_url,
             config=CrawlerRunConfig(
                 cache_mode=CacheMode.BYPASS,
-                session_id=f"{session_id}_js_extraction",
-                js_code=js_commands,
+                extraction_strategy=pdf_llm_strategy,
+                target_elements=pdf_selector,
+                session_id=f"{session_id}_pdf_extraction",
                 scan_full_page=True,
                 remove_overlay_elements=True,
+                verbose=True,
             )
         )
 
-
-        # with open('js_result.json', 'w') as f:
-        #     json.dump(js_result.js_execution_result, f)
-
-        if not js_result.js_execution_result:
-            log_message("❌ Failed to execute JS commands for PDF extraction", "ERROR")
+        if not pdf_result.success or not pdf_result.extracted_content:
+            log_message(f"❌ Failed to extract PDF content for product: {product_name}", "ERROR")
+            log_message(f"🔗 Product URL: {product_url}", "INFO")
             return
 
-        # Extract the JS execution results
-        js_extracted_content = js_result.js_execution_result
-        if isinstance(js_extracted_content, dict) and 'results' in js_extracted_content:
-            js_extracted_content = js_extracted_content['results'][0]
-        
-        if not js_extracted_content:
-            log_message("❌ No content extracted via JS", "ERROR")
+        # Step 2: Parse extracted content
+        try:
+            extracted_data = json.loads(pdf_result.extracted_content)
+        except json.JSONDecodeError as e:
+            log_message(f"❌ Failed to parse extracted JSON content: {e}", "ERROR")
             return
 
-
-        log_message(f"🔗 Found {len(js_extracted_content)} links via JS extraction", "INFO")
-
-        # Step 2: Filter links to reduce message length before LLM processing
-        filtered_links = filter_pdf_links(js_extracted_content, domain_name)
-        
-        if not filtered_links:
-            log_message(f"📭 No potential PDF links found after filtering for product: {product_name}", "INFO")
+        if not extracted_data:
+            log_message(f"📭 No PDFs found for product: {product_name}", "INFO")
             return
-        
-        log_message(f"🔍 Sending {len(filtered_links)} filtered links to LLM for analysis", "INFO")
 
-        # Step 3: Use LLMExtractionStrategy to identify Data Sheet links from filtered content
-        pdf_llm_strategy = get_pdf_llm_strategy(api_key=api_key, model=model)
+        log_message(f"🔗 Found {len(extracted_data)} potential PDF(s) via CSS selector", "INFO")
 
-        
-        
-        # Process filtered links with LLM to identify PDFs
+        # Step 3: Process each PDF link to download it
         pdf_links = []
         seen_pdf_urls_in_page = set()
-        raw = f"raw:\n product_url:{product_url}\n"
-        for link_item in filtered_links:
-            # Create a raw HTML URL for LLM processing
-            raw += f"{link_item['html']}\n"
 
-        raw_html_url = raw
-
-        try:   
-            # Use LLM to extract PDF information
-            llm_result = await crawler.arun(
-                url=raw_html_url,
-                config=CrawlerRunConfig(
-                    extraction_strategy=pdf_llm_strategy,
-                    session_id=f"{session_id}_llm_extraction_{link_item['index']}",
-                    cache_mode=CacheMode.BYPASS,
-                )
-            )
-
-            extracted_data = json.loads(llm_result.extracted_content)
-
-            if llm_result.success and extracted_data:
-                
-                # Server-side validation: Limit to maximum 3 PDFs and filter out certifications
-                validated_pdfs = []
-                certification_keywords = [
-                    'certificate', 'certification', 'certified', 'comply', 'compliance',
-                    'iso', 'tse',  'rohs', 'reach', 'etl',
-                    'quality', 'audit', 'approval', 'conform', 'conformity',
-                    'safety', 'environmental', 'calibration', 'test-report',
-                    'declaration', 'attestation', 'validation', 'verification',
-                    'standard', 'norm', 'regulation', 'directive'
-                ]
-
-                for item in extracted_data: 
-                    # Stop if we already have 3 PDFs
-                    if len(validated_pdfs) >= 3:
-                        log_message(f"📊 Reached maximum limit of 3 PDFs, stopping validation", "INFO")
-                        break
-                    
-                    pdf_url = item['url']
-                    pdf_text = item.get('text', '').lower()
-                    pdf_type = item.get('type', '').lower()
-                    
-                    # Server-side certification filter
-                    is_certification = any(keyword in pdf_text or keyword in pdf_type or keyword in pdf_url.lower() 
-                                         for keyword in certification_keywords)
-                    
-                    if is_certification:
-                        log_message(f"🚫 Rejected certification document: {item.get('text', 'Unknown')}", "INFO")
-                        continue
-                    
-                    # Convert relative URLs to absolute
-                    if not (pdf_url.startswith("https://") or pdf_url.startswith("http://") or pdf_url.startswith("www")):
-                        pdf_url = f"https://{domain_name}{pdf_url}"
-                        item['url'] = pdf_url  # Update the item with the corrected URL
-                    
-                    # Check for duplicates within this page
-                    if pdf_url not in seen_pdf_urls_in_page:
-                        validated_pdfs.append(item)
-                        seen_pdf_urls_in_page.add(pdf_url)
-                        log_message(f"✅ Validated PDF ({len(validated_pdfs)}/3): {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
-                    else: 
-                        log_message(f"⏭️ Skipping duplicate PDF URL: {pdf_url}", "INFO")
-                
-                pdf_links = validated_pdfs
-
+        for item in extracted_data:
+            # Stop if we already have 3 PDFs
+            if len(pdf_links) >= 3:
+                log_message(f"📊 Reached maximum limit of 3 PDFs, stopping validation", "INFO")
+                break
+            
+            pdf_url = item.get('url', '')
+            
+            
+            if not pdf_url:
+                log_message(f"⚠️ Skipping item with missing URL: {item}", "WARNING")
+                continue
+            
+            
+            # Convert relative URLs to absolute
+            if not (pdf_url.startswith("https://") or pdf_url.startswith("http://") or pdf_url.startswith("www")):
+                if domain_name:
+                    pdf_url = f"https://{domain_name}{pdf_url}"
+                    item['url'] = pdf_url  # Update the item with the corrected URL
+                else:
+                    log_message(f"⚠️ Skipping relative URL without domain: {pdf_url}", "WARNING")
+                    continue
+            
+            # Check for duplicates within this page
+            if pdf_url not in seen_pdf_urls_in_page:
+                pdf_links.append(item)
+                seen_pdf_urls_in_page.add(pdf_url)
+                log_message(f"✅ Validated PDF ({len(pdf_links)}/3): {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
             else: 
-                log_message(f"❌ No content extracted via LLM", "ERROR")
-                return
-                    
-            
-        except Exception as e:
-            log_message(f"⚠️ Error processing links: {e}", "WARNING")
-            
+                log_message(f"⏭️ Skipping duplicate PDF URL: {pdf_url}", "INFO")
 
         # Check if any PDFs were found
         if not pdf_links:
@@ -553,7 +353,6 @@ async def download_pdf_links(
             return  # Exit early without creating any folders
 
         log_message(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}", "INFO")
-        pdf_llm_strategy.show_usage()
 
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
@@ -590,20 +389,20 @@ async def download_pdf_links(
                 language_score = 1
             
             return (priority_score, type_score, language_score)
-        
+
         pdf_links.sort(key=sort_key, reverse=True)
-        
+
         log_message(f"📊 Processing {len(pdf_links)} validated technical documents (max 3) by priority", "INFO")
-        
+
         # Log selected document summary
         if pdf_links:
             log_message("📋 Selected documents:", "INFO")
             for i, pdf in enumerate(pdf_links, 1):
                 log_message(f"   {i}. {pdf.get('type', 'Unknown')} ({pdf.get('language', 'Unknown')}) - Priority: {pdf.get('priority', 'Unknown')}", "INFO")
-        
+
         # Download each PDF with duplicate checking (SSL verification disabled)
         log_message(f"📥 Starting download of {len(pdf_links)} PDF documents", "INFO")
-        
+
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             for i, pdf_info in enumerate(pdf_links, 1):
                 pdf_url = pdf_info['url']
@@ -691,7 +490,7 @@ async def download_pdf_links(
                             # AI-powered PDF cleaning with web interface logging
                             log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
                             try:
-                                # pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
+                                pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
                                 log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
                             except Exception as clean_error:
                                 log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")
@@ -701,7 +500,7 @@ async def download_pdf_links(
                 except Exception as e:
                     log_message(f"❌ Error downloading {pdf_url}: {str(e)}", "ERROR")
     except Exception as e:
-        log_message(f"⚠️ Error During processing  {product_url} pdf : {e}", "ERROR")
+        log_message(f"⚠️ Error during PDF processing for {product_url}: {e}", "ERROR")
 
 def detect_pagination_type(url: str) -> str:
     """
@@ -1062,7 +861,6 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill
         verbose=False,  # Enable verbose logging
     )
 
-
 def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
     """
     Returns the configuration for the PDF extraction strategy using LLM.
@@ -1090,73 +888,42 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-dis
         schema=PDF.model_json_schema(),
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
-            "You are a technical document specialist tasked with extracting ONLY the most valuable technical PDF documents from product pages. "
-            "Your goal is to find the TOP 3 MOST IMPORTANT technical documents while strictly avoiding certifications.\n\n"
-            
-            "🚨 CRITICAL LIMITATIONS:\n"
-            "- At least 2 PDFs should be Downloaded\n"
-            "- MAXIMUM 3 PDFs ONLY - Select the most valuable ones\n"
-            "- ZERO TOLERANCE for certifications, certificates, or compliance documents\n"
-            "- Focus on core technical content that engineers need\n\n"
-            
-            "🎯 PRIORITY RANKING (Select top 3 in this order):\n"
-            "1. HIGH PRIORITY: English Technical Data Sheets, Product Specifications\n"
-            "2. MEDIUM PRIORITY: Technical Drawings, Dimensional Drawings, Installation Manuals\n"
-            "3. LOW PRIORITY: Operation Manuals, Maintenance Manuals (only if no higher priority available)\n\n"
-            
-            "✅ MUST INCLUDE (if available, max 3 total):\n"
-            "- Technical Data Sheets (datasheet, technical specs, product specs)\n"
-            "- Dimensional/Technical Drawings (CAD drawings, technical drawings)\n"
-            "- Installation/Assembly Manuals (installation guide, assembly instructions)\n"
-            "- Operation Manuals (operation guide, user manual) - only if nothing better available\n\n"
-            
-            "🚫 STRICTLY FORBIDDEN - NEVER INCLUDE:\n"
-            "- ANY certificates, certifications, or compliance documents\n"
-            "- ISO standards, ISO certificates, ISO compliance\n"
-            "- TSE certificates, TSE standards, TSE compliance\n"
-            "- CE certificates, CE marking, CE compliance\n"
-            "- Quality certificates, quality assurance documents\n"
-            "- Safety certificates, safety compliance documents\n"
-            "- Environmental certificates (RoHS, REACH, etc.)\n"
-            "- Calibration certificates\n"
-            "- Test certificates, test reports from certification bodies\n"
-            "- Conformity declarations, declarations of conformity\n"
-            "- Approval certificates, approval documents\n"
-            "- Brochures, marketing materials, catalogs\n"
-            "- Press releases, news articles\n"
-            "- Application notes, white papers\n"
-            "- Quick start guides, getting started guides\n"
-            "- CAD files, 3D models (non-PDF formats)\n"
-            "- Software tools, configurators\n\n"
-            
-            "🔍 DETECTION KEYWORDS TO AVOID:\n"
-            "If ANY of these words appear in the link text or URL, REJECT the document:\n"
-            "- certificate, certification, certified, comply, compliance\n"
-            "- ISO, TSE, CE, RoHS, REACH, FCC, UL, CSA, ETL\n"
-            "- quality, QA, QC, audit, approval, conform, conformity\n"
-            "- safety, environmental, calibration, test-report\n"
-            "- declaration, attestation, validation, verification\n"
-            "- standard, norm, regulation, directive\n\n"
-            
-            "📋 REQUIRED FIELDS:\n"
-            "- url: Complete download URL to the PDF file\n"
-            "- text: Exact descriptive text from the webpage\n"
-            "- type: Document category (Data Sheet, Technical Drawing, Installation Manual, Operation Manual)\n"
-            "- language: Document language (English preferred, then German, Turkish, etc.)\n"
-            "- priority: High/Medium/Low based on technical value\n\n"
-            
-            "⚡ EXTRACTION RULES:\n"
-            "1. MAXIMUM 3 documents - be highly selective\n"
-            "2. If URL is incomplete, complete it with the domain\n"
-            "3. Prioritize English documents over other languages\n"
-            "4. Prefer data sheets and technical drawings over manuals\n"
-            "5. Double-check that NO certification-related keywords exist\n"
-            "6. If fewer than 2 suitable documents exist, return only those found\n"
-            "7. If ALL documents are certifications, return EMPTY ARRAY\n\n"
-            
-            "📤 OUTPUT FORMAT:\n"
-            "Return a JSON array with MINIMUM 2 technical documents. Each must have all required fields. "
-            "If no suitable non-certification documents are found, return an empty array []."
+               "You are a technical document extraction specialist. Your task is to analyze HTML content and extract PDF download links for technical documents.\n\n"
+    
+                "OBJECTIVE:\n"
+                "Extract downloadable English PDF documents that are:\n"
+                "• Only English documents if the document is not in English, Download in the given language\n"
+                "• if the same document is available in multiple languages, download only the English version\n"
+                "• Data Sheets (product specifications, technical data sheets) \n"
+                "• Technical Drawings (dimensional drawings, CAD drawings, schematics)\n"
+                "• Product Catalogs (product catalogs, brochures)\n\n"
+                
+                "REQUIRED OUTPUT FIELDS:\n"
+                "For each valid document, provide:\n"
+                "• url: Complete download URL (convert relative URLs to absolute using the domain)\n"
+                "• text: Exact link text or document title as shown in HTML\n"
+                "• type: Must be one of: \"Data Sheet\", \"Technical Drawing\", or \"Catalog\"\n"
+                "• language: Document language code (\"EN\", \"DE\", \"TR\", etc.) or \"Unknown\"\n"
+                "• priority: \"High\" for Data Sheet/Technical Drawing, \"Medium\" for Catalog\n\n"
+                
+                "EXTRACTION GUIDELINES:\n"
+                "✓ Look for <a> tags with href attributes pointing to downloadable documents\n"
+                "✓ Check for keywords: datasheet, specifications, drawings, catalog, brochure, manual\n"
+                "✓ Extract exact text content - do not modify or paraphrase\n"
+                "✓ Convert relative URLs to absolute format\n"
+                "✓ Remove duplicates - same URL should appear only once\n"
+                "✓ Focus only on the three specified document types\n\n"
+                
+                "WHAT TO IGNORE:\n"
+                "✗ Certificates, certifications, compliance documents\n"
+                "✗ Software downloads, apps, tools\n"
+                "✗ Marketing materials, press releases\n"
+                "✗ Installation guides, user manuals (unless they are technical drawings)\n"
+                "✗ Any non-PDF content\n\n"
+                
+                "OUTPUT FORMAT:\n"
+                "Return a JSON array of objects matching the schema. If no valid documents are found, return an empty array [].\n\n"
+    
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging

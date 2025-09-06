@@ -27,6 +27,7 @@ from utils.scraper_utils import (
     fetch_and_process_page,
     get_browser_config,
     get_llm_strategy,
+    get_pdf_llm_strategy,
     append_page_param,  
     get_regex_strategy,
     fetch_and_process_page_with_js,
@@ -63,7 +64,9 @@ def read_sites_from_csv(input_file):
             sites.append({
                 "url": row["url"],
                 "css_selector": [s.strip() for s in row['css_selector'].split('|') if s.strip()],
+                "pdf_selector": [s.strip() for s in row['pdf_selector'].split('|') if s.strip()],  # Add pdf_selector with fallback
                 "button_selector": row["button_selector"],
+                
             })
     return sites
 
@@ -96,6 +99,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     """
     browser_config = get_browser_config()
     llm_strategy = get_llm_strategy(api_key=api_key, model=model)
+    pdf_llm_strategy = get_pdf_llm_strategy(api_key=api_key, model=model)
     regex_strategy = get_regex_strategy()
     session_id = "bulk_crawl_session"
 
@@ -109,6 +113,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
 
     sites = read_sites_from_csv(input_file)
     log_message(f"Loaded {len(sites)} sites to crawl.", "INFO")
+    log_message(f"Site: {sites}", "INFO")
 
     # Update status for web interface
     if status_callback:
@@ -225,11 +230,12 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 product_url=venue["productLink"],
                                 product_name=venue["productName"],
                                 output_folder="output",
+                                pdf_selector=site["pdf_selector"],  # Add pdf_selector from CSV
                                 session_id=venue_session_id,
                                 regex_strategy=regex_strategy,
                                 domain_name=domain_name,
+                                pdf_llm_strategy=pdf_llm_strategy,
                                 api_key=api_key,
-                                model=model
                             )
                             products_processed_with_pdf_crawler += 1
                             
@@ -271,7 +277,8 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                 await pdf_crawler.close()
                 log_message("🚪 PDF crawler properly closed", "INFO")
 
-    llm_strategy.show_usage()
+    log_message(f"PDF LLM strategy usage: {pdf_llm_strategy.show_usage()}", "INFO")
+    log_message(f"LLM strategy usage: {llm_strategy.show_usage()}", "INFO")
     log_message(f"Crawling completed. Total venues processed: {len(all_venues)}", "SUCCESS")
 
 async def main():

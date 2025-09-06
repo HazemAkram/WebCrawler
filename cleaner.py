@@ -32,8 +32,12 @@ BG_SAMPLE_MARGIN = 40        # Background estimation margin
 RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
+# OCR region configuration
+OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+
 # Footer removal configuration
-FOOTER_HEIGHT_RATIO = 0.20   # Footer height as ratio of page height (15% of page)
+FOOTER_HEIGHT_RATIO = 0.7  # Footer height as ratio of page height (15% of page)
 FOOTER_MIN_HEIGHT = 50       # Minimum footer height in pixels
 FOOTER_MAX_HEIGHT = 200      # Maximum footer height in pixels
 FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
@@ -69,6 +73,24 @@ def set_ocr_confidence_threshold(threshold: int):
         print(f"✅ OCR confidence threshold set to {threshold}")
     else:
         print(f"❌ Invalid confidence threshold: {threshold}. Must be between 0-100.")
+
+def set_ocr_region_settings(bottom_region_ratio: float = None):
+    """
+    Configure OCR region processing settings.
+    
+    Args:
+        bottom_region_ratio (float): Ratio of the bottom region to process for OCR (0.1-1.0)
+                                   0.25 = bottom 25%, 0.5 = bottom 50%, 1.0 = entire page
+    """
+    global OCR_BOTTOM_REGION_RATIO, OCR_REGION_START_RATIO
+    
+    if bottom_region_ratio is not None:
+        if 0.1 <= bottom_region_ratio <= 1.0:
+            OCR_BOTTOM_REGION_RATIO = bottom_region_ratio
+            OCR_REGION_START_RATIO = 1.0 - bottom_region_ratio
+            print(f"✅ OCR region set to bottom {int(bottom_region_ratio*100)}% of the page")
+        else:
+            print(f"❌ Invalid bottom region ratio: {bottom_region_ratio}. Must be between 0.1-1.0")
 
 def set_footer_removal_settings(height_ratio: float = None, min_height: int = None, 
                                max_height: int = None, detection_threshold: float = None):
@@ -495,10 +517,14 @@ def kmeans(input_img, k, i_val):
 
     return centers[i_val].astype(int), centers, hist
 
-def enhance_image_for_ocr(image):
+def enhance_image_for_ocr(image, bottom_25_percent_only=True):
     """
     Simple image enhancement using K-means for better OCR
     Returns enhanced image for OCR, original image unchanged
+    
+    Args:
+        image: PIL Image to enhance
+        bottom_25_percent_only: If True, only process the bottom 25% of the image for OCR
     """
     # Convert PIL to OpenCV format
     img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
@@ -506,32 +532,66 @@ def enhance_image_for_ocr(image):
     # Convert to grayscale for K-means
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
     
-    # Apply K-means enhancement
-    text_value, centers, hist = kmeans(gray, k=4, i_val=1)
-    
-    # Create enhanced image for OCR
-    enhanced = gray.copy()
-    
-    # Apply simple contrast enhancement to text regions
-    # You can adjust the threshold based on your needs
-    text_mask = gray < text_value + 20  # Slightly above the text cluster value
-    
-    # Apply CLAHE only to text regions
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    enhanced_clahe = clahe.apply(gray)
-    
-    # Apply enhanced regions back to the image
-    enhanced[text_mask] = enhanced_clahe[text_mask]
-    
-    # Convert back to PIL format
-    return Image.fromarray(enhanced)
+    if bottom_25_percent_only:
+        # Extract only the bottom region of the image for OCR processing
+        height, width = gray.shape
+        bottom_region_start = int(height * OCR_REGION_START_RATIO)  # Start at configured ratio
+        
+        # Create a new image with only the bottom region
+        bottom_region = gray[bottom_region_start:, :]
+        
+        # Apply K-means enhancement only to the bottom region
+        text_value, centers, hist = kmeans(bottom_region, k=4, i_val=1)
+        
+        # Create enhanced image for OCR (only bottom region)
+        enhanced = bottom_region.copy()
+        
+        # Apply simple contrast enhancement to text regions
+        text_mask = bottom_region < text_value + 20  # Slightly above the text cluster value
+        
+        # Apply CLAHE only to text regions
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced_clahe = clahe.apply(bottom_region)
+        
+        # Apply enhanced regions back to the image
+        enhanced[text_mask] = enhanced_clahe[text_mask]
+        
+        print(f"   🎯 OCR processing bottom {int(OCR_BOTTOM_REGION_RATIO*100)}% region: {enhanced.shape[0]}x{enhanced.shape[1]} pixels (original: {height}x{width})")
+        
+        # Convert back to PIL format
+        return Image.fromarray(enhanced)
+    else:
+        # Process the entire image (original behavior)
+        # Apply K-means enhancement
+        text_value, centers, hist = kmeans(gray, k=4, i_val=1)
+        
+        # Create enhanced image for OCR
+        enhanced = gray.copy()
+        
+        # Apply simple contrast enhancement to text regions
+        text_mask = gray < text_value + 20  # Slightly above the text cluster value
+        
+        # Apply CLAHE only to text regions
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced_clahe = clahe.apply(gray)
+        
+        # Apply enhanced regions back to the image
+        enhanced[text_mask] = enhanced_clahe[text_mask]
+        
+        # Convert back to PIL format
+        return Image.fromarray(enhanced)
 
 def replace_text_in_scanned_pdf_ai(images, api_key: str):
     """
     Automatically removes contact information using AI analysis.
     Uses K-means enhanced images for OCR, but processes original images.
     Improved approach: processes text in contextual chunks instead of word-by-word.
-    Now includes footer removal for OCR-resistant text.
+    
+    Processing Order:
+    1. OCR Analysis (bottom 25% of page) - detects readable text
+    2. AI Analysis - identifies contact information from OCR results
+    3. Text Removal - removes AI-identified contact information
+    4. Footer Removal - handles remaining OCR-resistant text
     """
     modified_images = []
     groq_client = get_groq_client(api_key)
@@ -546,21 +606,21 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         # Convert to OpenCV format for processing
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        original_height = img_cv.shape[0]  # Store original image height for coordinate adjustment
         
-        # First, remove footer area (handles OCR-resistant text)
-        img_cv = remove_footer_area(img_cv, page_num)
+        # First, perform OCR analysis on original image (bottom 25% only)
+        enhanced_img = enhance_image_for_ocr(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), bottom_25_percent_only=True)
         
-        # Create enhanced image for OCR (from footer-cleaned image)
-        enhanced_img = enhance_image_for_ocr(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
-        
-        # Extract text from enhanced image with position data
+        # Extract text from enhanced image with position data (bottom 25% region only)
         data = pytesseract.image_to_data(enhanced_img, output_type=pytesseract.Output.DICT)
         
-        # Create contextual text chunks with bounding box information
-        text_chunks = create_contextual_text_chunks(data)
+        # Create contextual text chunks with bounding box information (adjust coordinates for bottom 25% processing)
+        text_chunks = create_contextual_text_chunks(data, original_image_height=original_height, bottom_25_percent_only=True)
         
         if not text_chunks:
             print(f"   Page {page_num}: No text chunks found")
+            # Still remove footer area even if no OCR text was found
+            img_cv = remove_footer_area(img_cv, page_num)
             # Convert back to PIL format and add to results
             modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
             continue
@@ -572,6 +632,8 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         if not ai_analysis:
             print(f"   Page {page_num}: AI returned no results")
+            # Still remove footer area even if AI found nothing
+            img_cv = remove_footer_area(img_cv, page_num)
             # Convert back to PIL format and add to results
             modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
             continue
@@ -616,18 +678,23 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         print(f"   Page {page_num}: Removed {removed_count} text chunks")
         
+        # After OCR-based text removal, remove footer area (handles OCR-resistant text)
+        img_cv = remove_footer_area(img_cv, page_num)
+        
         # Convert back to PIL format and add to results
         modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
     
     return modified_images
 
-def create_contextual_text_chunks(data):
+def create_contextual_text_chunks(data, original_image_height=None, bottom_25_percent_only=True):
     """
     Create contextual text chunks from Tesseract output data.
     Groups related text elements into meaningful chunks for better AI analysis.
     
     Args:
         data: Tesseract output data dictionary
+        original_image_height: Height of the original image (needed to adjust coordinates for bottom 25% processing)
+        bottom_25_percent_only: If True, adjust coordinates for bottom 25% region processing
         
     Returns:
         List of dictionaries containing text chunks with bounding box information
@@ -638,14 +705,22 @@ def create_contextual_text_chunks(data):
     chunks = []
     current_chunk = None
     
+    # Calculate offset for bottom region if needed
+    y_offset = 0
+    if bottom_25_percent_only and original_image_height:
+        y_offset = int(original_image_height * OCR_REGION_START_RATIO)  # Offset to map back to original image coordinates
+    
     # Process text elements in reading order (top to bottom, left to right)
     text_elements = []
     for i in range(len(data['text'])):
         if data['text'][i].strip():  # Only process non-empty text
+            # Adjust coordinates if processing bottom 25% only
+            adjusted_top = data['top'][i] + y_offset if bottom_25_percent_only else data['top'][i]
+            
             text_elements.append({
                 'text': data['text'][i].strip(),
                 'left': data['left'][i],
-                'top': data['top'][i],
+                'top': adjusted_top,  # Adjusted top coordinate
                 'width': data['width'][i],
                 'height': data['height'][i],
                 'conf': data['conf'][i] if 'conf' in data else 0

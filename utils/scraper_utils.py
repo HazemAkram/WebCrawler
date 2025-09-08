@@ -14,6 +14,7 @@ import hashlib
 import traceback
 import asyncio
 import gc 
+import shutil  # Add import for file copying operations
 
 import aiofiles
 import aiohttp
@@ -271,9 +272,9 @@ async def download_pdf_links(
 
 
 
-    # Global set to track downloaded PDFs across all products
+    # Global dictionary to track downloaded PDFs with their file paths across all products
     if not hasattr(download_pdf_links, 'downloaded_pdfs'):
-        download_pdf_links.downloaded_pdfs = set()
+        download_pdf_links.downloaded_pdfs = {}  # Change from set to dict: {url: file_path}
 
     try:
         log_message(f"🔍 Starting PDF extraction for product: {product_name}", "INFO")
@@ -292,6 +293,7 @@ async def download_pdf_links(
                 scan_full_page=True,
                 remove_overlay_elements=True,
                 verbose=True,
+                simulate_user=True,
             )
         )
 
@@ -424,10 +426,23 @@ async def download_pdf_links(
                 filename = generate_pdf_filename(pdf_url, product_name)
                 save_path = os.path.join(productPath, filename)
                 
-                # # Check if this exact PDF URL has been downloaded before (global tracking)
-                # if pdf_url in download_pdf_links.downloaded_pdfs:
-                #     print(f"⏭️ Skipping duplicate PDF URL (previously downloaded): {filename}")
-                #     continue
+                # Check if this exact PDF URL has been downloaded before (global tracking)
+                if pdf_url in download_pdf_links.downloaded_pdfs:
+                    previous_path = download_pdf_links.downloaded_pdfs[pdf_url]
+                    if os.path.exists(previous_path):
+                        try:
+                            # Copy the previously cleaned PDF to current product folder
+                            shutil.copy2(previous_path, save_path)
+                            log_message(f"📋 Copied cleaned PDF from previous download: {filename}", "INFO")
+                            log_message(f"   Source: {previous_path}", "INFO")
+                            log_message(f"   Destination: {save_path}", "INFO")
+                            continue
+                        except Exception as copy_error:
+                            log_message(f"⚠️ Failed to copy cleaned PDF: {str(copy_error)}", "WARNING")
+                            log_message(f"   Will re-download and process: {filename}", "INFO")
+                    else:
+                        log_message(f"⚠️ Previously downloaded PDF not found at: {previous_path}", "WARNING")
+                        log_message(f"   Will re-download and process: {filename}", "INFO")
                 
                 # # Check if file already exists in the product folder
                 # if os.path.exists(save_path):
@@ -491,8 +506,8 @@ async def download_pdf_links(
                             async with aiofiles.open(save_path, "wb") as f:
                                 await f.write(content)
                             
-                            # Mark this URL as downloaded
-                            download_pdf_links.downloaded_pdfs.add(pdf_url)
+                            # Mark this URL as downloaded with its file path
+                            download_pdf_links.downloaded_pdfs[pdf_url] = save_path
 
 
                             # AI-powered PDF cleaning with web interface logging

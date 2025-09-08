@@ -124,9 +124,8 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
             'total_venues': 0
         })
 
-    async with AsyncWebCrawler(config=browser_config) as crawler:
-        try:
-            for index, site in enumerate(sites):
+    try:
+        for index, site in enumerate(sites):
                 # Check if stop is requested
                 if stop_requested_callback and stop_requested_callback():
                     log_message("Stop requested by user.", "WARNING")
@@ -159,124 +158,123 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                 pagination_type = detect_pagination_type(url)
                 log_message(f"🔍 Detected pagination type: {pagination_type}", "INFO")
                 
-                count = 0
-                while True:
-                    # Check if stop is requested
-                    if stop_requested_callback and stop_requested_callback():
-                        log_message("Stop requested by user.", "WARNING")
-                        break
-
-                    if button_selector:
-                        # For button-based pagination, use the current URL
-                        paged_url = url
-                        log_message(f"🔄 Crawling URL with JS pagination: {paged_url} (page {page_number})", "INFO")
-                        # Use JS-based extraction
-                        venues, no_results = await fetch_and_process_page_with_js(
-                            crawler=crawler,
-                            page_url=paged_url,
-                            llm_strategy=llm_strategy,
-                            button_selector=button_selector,
-                            elements=css_selector,
-                            required_keys=REQUIRED_KEYS,
-                            seen_names=seen_names,
-                        )
-                    else:
-                        # For URL-based pagination, construct the paged URL
-                        paged_url = append_page_param(url, page_number, pagination_type)
-                        log_message(f"🔄 Crawling URL with {pagination_type} pagination: {paged_url} (page {page_number})", "INFO")
-                        # Use standard extraction
-                        venues, no_results = await fetch_and_process_page(
-                            crawler = crawler,
-                            css_selector = css_selector,
-                            page_number = page_number,
-                            url = paged_url,
-                            llm_strategy = llm_strategy,
-                            session_id = f"{session_id}_{page_number}",
-                            required_keys = REQUIRED_KEYS,
-                            seen_names = seen_names,
-                        )
-
-                    if no_results or not venues:
-                        log_message(f"🏁 Stopping pagination - no more results on page {page_number}", "INFO")
-                        break
-                    
-                    
-                    for venue in venues:
+                async with AsyncWebCrawler(config=browser_config) as crawler:
+                    while True:
                         # Check if stop is requested
                         if stop_requested_callback and stop_requested_callback():
                             log_message("Stop requested by user.", "WARNING")
                             break
 
-                        # Initialize or restart PDF crawler if needed
-                        if pdf_crawler is None or products_processed_with_pdf_crawler >= MAX_PRODUCTS_PER_PDF_CRAWLER:
-                            if pdf_crawler is not None:
-                                log_message("🔄 Restarting PDF crawler to prevent resource exhaustion", "INFO")
-                                await pdf_crawler.close()
-                                await asyncio.sleep(2)  # Brief pause to ensure cleanup
-                            
-                            pdf_crawler = AsyncWebCrawler(config=browser_config)
-                            await pdf_crawler.start()
-                            products_processed_with_pdf_crawler = 0
-                            log_message("🚀 Fresh PDF crawler instance started", "INFO")
-
-                        await asyncio.sleep(random.uniform(5, 15))
-                        venue_session_id = f"{session_id}_{venue['productName']}"
-                        
-                        log_message(f"📥 Downloading PDFs for: {venue['productName']}", "INFO")
-                        
-                        try:
-                            await download_pdf_links(
-                                pdf_crawler,  # Use dedicated PDF crawler
-                                product_url=venue["productLink"],
-                                product_name=venue["productName"],
-                                output_folder="output",
-                                pdf_selector=site["pdf_selector"],  # Add pdf_selector from CSV
-                                session_id=venue_session_id,
-                                regex_strategy=regex_strategy,
-                                domain_name=domain_name,
-                                pdf_llm_strategy=pdf_llm_strategy,
-                                api_key=api_key,
-                                cat_name=site["cat_name"],  # Add category name for folder organization
+                        if button_selector:
+                            # For button-based pagination, use the current URL
+                            paged_url = url
+                            log_message(f"🔄 Crawling URL with JS pagination: {paged_url} (page {page_number})", "INFO")
+                            # Use JS-based extraction
+                            venues, no_results = await fetch_and_process_page_with_js(
+                                crawler=crawler,
+                                page_url=paged_url,
+                                llm_strategy=llm_strategy,
+                                button_selector=button_selector,
+                                elements=css_selector,
+                                required_keys=REQUIRED_KEYS,
+                                seen_names=seen_names,
                             )
-                            products_processed_with_pdf_crawler += 1
-                            
-                        except Exception as pdf_error:
-                            log_message(f"❌ PDF processing failed for {venue['productName']}: {str(pdf_error)}", "ERROR")
-                            # Don't increment counter on failure, but continue processing
+                        else:
+                            # For URL-based pagination, construct the paged URL
+                            paged_url = append_page_param(url, page_number, pagination_type)
+                            log_message(f"🔄 Crawling URL with {pagination_type} pagination: {paged_url} (page {page_number})", "INFO")
+                            # Use standard extraction
+                            venues, no_results = await fetch_and_process_page(
+                                crawler = crawler,
+                                css_selector = css_selector,
+                                page_number = page_number,
+                                url = paged_url,
+                                llm_strategy = llm_strategy,
+                                session_id = f"{session_id}_{page_number}",
+                                required_keys = REQUIRED_KEYS,
+                                seen_names = seen_names,
+                            )
 
-                        await cleanup_crawler_session(pdf_crawler, venue_session_id)
-
-                        count += 1
+                        if no_results or not venues:
+                            log_message(f"🏁 Stopping pagination - no more results on page {page_number}", "INFO")
+                            break
                         
-                        if count % 10 == 0:
-                            # Force to Collect garbage after every 10 products.
-                            gc.collect()
-                            log_message(f"🧹 Collected garbage after {count} products", "INFO")
+                        
+                        for venue in venues:
+                            # Check if stop is requested
+                            if stop_requested_callback and stop_requested_callback():
+                                log_message("Stop requested by user.", "WARNING")
+                                break
 
-                    all_venues.extend(venues)
-                    
-                    # Update total venues count for web interface
-                    if status_callback:
-                        status_callback({
-                            'total_venues': len(all_venues)
-                        })
+                            # Initialize or restart PDF crawler if needed
+                            if pdf_crawler is None or products_processed_with_pdf_crawler >= MAX_PRODUCTS_PER_PDF_CRAWLER:
+                                if pdf_crawler is not None:
+                                    log_message("🔄 Restarting PDF crawler to prevent resource exhaustion", "INFO")
+                                    await pdf_crawler.close()
+                                    await asyncio.sleep(2)  # Brief pause to ensure cleanup
+                                
+                                pdf_crawler = AsyncWebCrawler(config=browser_config)
+                                await pdf_crawler.start()
+                                products_processed_with_pdf_crawler = 0
+                                log_message("🚀 Fresh PDF crawler instance started", "INFO")
 
-                    # Increment page number for next iteration
-                    page_number += 1
-                    
-                    # Update current page for web interface
-                    if status_callback:
-                        status_callback({
-                            'current_page': page_number
-                        })
-                    
-                    await asyncio.sleep(random.uniform(3, 15))  # Be polite
+                            await asyncio.sleep(random.uniform(5, 15))
+                            venue_session_id = f"{session_id}_{venue['productName']}"
+                            
+                            log_message(f"📥 Downloading PDFs for: {venue['productName']}", "INFO")
+                            
+                            try:
+                                await download_pdf_links(
+                                    pdf_crawler,  # Use dedicated PDF crawler
+                                    product_url=venue["productLink"],
+                                    product_name=venue["productName"],
+                                    output_folder="output",
+                                    pdf_selector=site["pdf_selector"],  # Add pdf_selector from CSV
+                                    session_id=venue_session_id,
+                                    regex_strategy=regex_strategy,
+                                    domain_name=domain_name,
+                                    pdf_llm_strategy=pdf_llm_strategy,
+                                    api_key=api_key,
+                                    cat_name=site["cat_name"],  # Add category name for folder organization
+                                )
+                                products_processed_with_pdf_crawler += 1
+                                
+                            except Exception as pdf_error:
+                                log_message(f"❌ PDF processing failed for {venue['productName']}: {str(pdf_error)}", "ERROR")
+                                # Don't increment counter on failure, but continue processing
 
-        finally:
-            # Ensure PDF crawler is properly closed
-            if pdf_crawler is not None:
-                await pdf_crawler.close()
-                log_message("🚪 PDF crawler properly closed", "INFO")
+                        all_venues.extend(venues)
+                        
+                        # Update total venues count for web interface
+                        if status_callback:
+                            status_callback({
+                                'total_venues': len(all_venues)
+                            })
+
+                        # Increment page number for next iteration
+                        page_number += 1
+                        
+                        # Update current page for web interface
+                        if status_callback:
+                            status_callback({
+                                'current_page': page_number
+                            })
+                        
+                        await asyncio.sleep(random.uniform(3, 15))  # Be polite
+
+                        if crawler is not None:
+                            log_message(f"🔄 Restarting Crawler to prevent resource exhaustion", "INFO")
+                            await crawler.close()
+                            await asyncio.sleep(2)
+                        crawler = AsyncWebCrawler(config=browser_config)
+                        await crawler.start()
+                        log_message("🚀 Fresh Crawler instance started", "INFO")
+
+    finally:
+        # Ensure PDF crawler is properly closed
+        if pdf_crawler is not None:
+            await pdf_crawler.close()
+            log_message("🚪 PDF crawler properly closed", "INFO")
 
     log_message(f"PDF LLM strategy usage: {pdf_llm_strategy.show_usage()}", "INFO")
     log_message(f"LLM strategy usage: {llm_strategy.show_usage()}", "INFO")

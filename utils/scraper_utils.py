@@ -434,8 +434,6 @@ async def download_pdf_links(
                             # Copy the previously cleaned PDF to current product folder
                             shutil.copy2(previous_path, save_path)
                             log_message(f"📋 Copied cleaned PDF from previous download: {filename}", "INFO")
-                            log_message(f"   Source: {previous_path}", "INFO")
-                            log_message(f"   Destination: {save_path}", "INFO")
                             continue
                         except Exception as copy_error:
                             log_message(f"⚠️ Failed to copy cleaned PDF: {str(copy_error)}", "WARNING")
@@ -803,7 +801,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_width = 1080,  # Width of the browser viewport
         viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
@@ -834,13 +832,13 @@ def get_regex_strategy() -> RegexExtractionStrategy:
 
 
 
-def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
+def get_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instant") -> LLMExtractionStrategy:
     """
     Returns the configuration for the language model extraction strategy.
     
     Args:
         api_key (str): The API key for the LLM provider. If None, will try to get from environment.
-        model (str): The LLM model to use. Defaults to "groq/deepseek-r1-distill-llama-70b".
+        model (str): The LLM model to use. Defaults to "groq/llama-3.1-8b-instant".
     
     Returns:
         LLMExtractionStrategy: The settings for how to extract data using LLM.
@@ -884,13 +882,13 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill
         verbose=False,  # Enable verbose logging
     )
 
-def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-distill-llama-70b") -> LLMExtractionStrategy:
+def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instant") -> LLMExtractionStrategy:
     """
     Returns the configuration for the PDF extraction strategy using LLM.
     
     Args:
         api_key (str): The API key for the LLM provider. If None, will try to get from environment.
-        model (str): The LLM model to use. Defaults to "groq/deepseek-r1-distill-llama-70b".
+        model (str): The LLM model to use. Defaults to "groq/llama-3.1-8b-instant".
     
     Returns:
         LLMExtractionStrategy: The settings for how to extract PDF links using LLM.
@@ -953,44 +951,6 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/deepseek-r1-dis
     )
 
 
-async def check_no_results(
-    crawler: AsyncWebCrawler,
-    css_selector: str,
-    url: str,
-    session_id: str,
-) -> bool:
-    """
-    Checks if the "No Results Found" message is present on the page.
-
-    Args:
-        crawler (AsyncWebCrawler): The web crawler instance.
-        url (str): The URL to check.
-        session_id (str): The session identifier.
-
-    Returns:
-        bool: True if "No Results Found" message is found, False otherwise.
-    """
-    # Fetch the page without any CSS selector or extraction strategy
-    result = await crawler.arun(
-        url=url,
-        config=CrawlerRunConfig(
-            cache_mode=CacheMode.BYPASS,
-            target_elements = css_selector,
-            session_id=session_id,
-        ),
-    )
-
-    if result.success:
-        if "No Results Found" in result.cleaned_html:
-            return True
-    else:
-        log_message(
-            f"Error fetching page for 'No Results Found' check: {result.error_message}"
-        )
-
-    return False
-
-
 async def fetch_and_process_page(
     crawler: AsyncWebCrawler,
     css_selector: str,
@@ -1021,20 +981,6 @@ async def fetch_and_process_page(
 
     # Debugging: Print the URL being fetched
     log_message(f"🔄 Crawling page {page_number} from URL: {url}", "INFO")    
-
-
-    # Check if "No Results Found" message is present
-    no_results = await check_no_results(
-        crawler,
-        css_selector,
-        url,
-        session_id
-    )
-
-    if no_results:
-        log_message(f"------------------------------------------------------------------------- 🏁 No results found on page {page_number}. Stopping pagination. from the first run !! -------------------------------------------------------------------------"    )
-        return [], True  # No more results, signal to stop crawling
-
     # Fetch page content with the extraction strategy
     result = await crawler.arun(
         url,

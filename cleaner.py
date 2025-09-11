@@ -428,29 +428,110 @@ def detect_footer_area(img_cv):
     
     return footer_height
 
-def remove_footer_area(img_cv, page_num):
+def remove_footer_area(img_cv, page_num, groq_client=None):
     """
-    Remove footer area by replacing it with background color.
-    Handles OCR-resistant text that may be missed by standard text detection.
+    Process footer area by performing OCR and using LLM to remove contact information.
+    If no text is found or no LLM client provided, removes the entire footer area.
     
     Args:
         img_cv: OpenCV image in BGR format
         page_num: Page number for logging
+        groq_client: Optional Groq client for AI analysis
         
     Returns:
-        OpenCV image with footer area removed
+        OpenCV image with footer area processed
     """
     height, width = img_cv.shape[:2]
     
     # Detect optimal footer height
-    footer_height = detect_footer_area(img_cv)
+    footer_height = detect_footer_area(img_cv) 
     
     # Define footer region
     footer_start_y = height - footer_height
     footer_bbox = (0, footer_start_y, width, footer_height)
     
-    # Estimate background color from multiple areas to get better average
-    # Sample from top, middle, and side margins
+    # Extract footer region for OCR analysis
+    footer_region = img_cv[footer_start_y:, :]
+    footer_pil = Image.fromarray(cv2.cvtColor(footer_region, cv2.COLOR_BGR2RGB))
+    
+    # Perform OCR on footer region
+    data = pytesseract.image_to_data(footer_pil, output_type=pytesseract.Output.DICT)
+    
+    # Check if any text was found in footer
+    text_found = False
+    for i in range(len(data['text'])):
+        if data['text'][i].strip() and data['conf'][i] > OCR_CONFIDENCE_THRESHOLD:
+            text_found = True
+            break
+    
+    if text_found and groq_client:        
+        # Create contextual text chunks for footer region
+        text_chunks = create_contextual_text_chunks(data, original_image_height=footer_height, bottom_25_percent_only=False)
+        
+        if text_chunks:            
+            # Use AI to analyze footer text chunks
+            ai_analysis = analyze_text_with_ai_chunks(text_chunks, groq_client)
+            
+            if ai_analysis:                
+                # Process AI analysis results and remove identified contact information
+                removed_count = 0
+                for ai_item in ai_analysis:
+                    text_to_remove = ai_item.get("text_to_remove", "").lower()
+                    reason = ai_item.get("reason", "unknown")
+                    confidence = ai_item.get("confidence", "low")
+                    
+                    # Skip removal if reason is unknown
+                    if reason.lower() == "unknown":
+                        print(f"   ⚠️ Skipping removal of '{text_to_remove}' - reason is unknown")
+                        continue
+                    
+                    # Find chunks that contain the text to remove
+                    matching_chunks = []
+                    for chunk in text_chunks:
+                        chunk_text = chunk['text'].lower()
+                        if not chunk_text:
+                            continue
+                        
+                        if (text_to_remove in chunk_text or 
+                            chunk_text in text_to_remove or 
+                            chunk_text == text_to_remove):
+                            matching_chunks.append(chunk)
+                    
+                    if matching_chunks:
+                        # Remove matching chunks from footer region
+                        for chunk in matching_chunks:
+                            bbox = chunk['bbox']
+                            # Adjust coordinates to footer region
+                            adjusted_bbox = (bbox[0], bbox[1], bbox[2], bbox[3])
+                            
+                            # Remove the text region from footer
+                            remove_region(footer_region, adjusted_bbox, padding=TEXT_PADDING)
+                            
+                            print(f"🗑️ Removed footer chunk: '{chunk['text'].strip()}' (Reason: {reason}, Confidence: {confidence})")
+                            removed_count += 1
+                
+                print(f"   📝 Footer: Removed {removed_count} contact text chunks")
+                
+                # Copy processed footer back to main image
+                img_cv[footer_start_y:, :] = footer_region
+                print(f"   🦶 Page {page_num}: Processed footer area ({footer_height}px high) with AI contact removal")
+                return img_cv
+            else:
+                print(f"   📝 Footer: AI found no contact information to remove")
+                print(f"   🦶 Page {page_num}: Processed footer area ({footer_height}px high) with AI contact removal")
+                return img_cv
+        else:
+            print(f"   📝 Footer: No text chunks created from OCR")
+            print(f"   🦶 Page {page_num}: Processed footer area ({footer_height}px high) with AI contact removal")
+            return img_cv
+    else:
+        if not text_found:
+            print(f"   📝 No text detected in footer, removing entire area")
+        else:
+            print(f"   📝 No AI client provided, removing entire footer area")
+    
+    # Fallback: Remove entire footer area with background color
+    # Estimate background color from multiple areas
     bg_samples = []
     
     # Top margin sample
@@ -476,7 +557,6 @@ def remove_footer_area(img_cv, page_num):
         bg_color = np.mean(bg_samples, axis=0)
     
     # Apply some smoothing to avoid harsh edges
-    # Create a copy for processing
     result_img = img_cv.copy()
     
     # Create a gradient mask for smoother transition (optional)
@@ -619,8 +699,8 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         if not text_chunks:
             print(f"   Page {page_num}: No text chunks found")
-            # Still remove footer area even if no OCR text was found
-            img_cv = remove_footer_area(img_cv, page_num)
+            # Still process footer area even if no OCR text was found
+            img_cv = remove_footer_area(img_cv, page_num, groq_client)
             # Convert back to PIL format and add to results
             modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
             continue
@@ -632,8 +712,8 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         if not ai_analysis:
             print(f"   Page {page_num}: AI returned no results")
-            # Still remove footer area even if AI found nothing
-            img_cv = remove_footer_area(img_cv, page_num)
+            # Still process footer area even if AI found nothing
+            img_cv = remove_footer_area(img_cv, page_num, groq_client)
             # Convert back to PIL format and add to results
             modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
             continue
@@ -648,6 +728,11 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
             reason = ai_item.get("reason", "unknown")
             confidence = ai_item.get("confidence", "low")
             chunk_ref = ai_item.get("chunk_reference", "")
+            
+            # Skip removal if reason is unknown
+            if reason.lower() == "unknown":
+                print(f"   ⚠️ Skipping removal of '{text_to_remove}' - reason is unknown")
+                continue
                         
             # Find chunks that contain or match the text to remove
             matching_chunks = []
@@ -678,8 +763,8 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         print(f"   Page {page_num}: Removed {removed_count} text chunks")
         
-        # After OCR-based text removal, remove footer area (handles OCR-resistant text)
-        img_cv = remove_footer_area(img_cv, page_num)
+        # After OCR-based text removal, process footer area with AI (handles OCR-resistant text)
+        img_cv = remove_footer_area(img_cv, page_num, groq_client)
         
         # Convert back to PIL format and add to results
         modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))

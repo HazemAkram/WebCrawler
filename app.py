@@ -18,6 +18,8 @@ import shutil
 from datetime import datetime
 import secrets
 from pathlib import Path
+import zipfile
+
 
 # Import the crawling functions
 from main import crawl_from_sites_csv, set_log_callback, log_message
@@ -244,7 +246,6 @@ def get_logs():
 @app.route('/download_output')
 def download_output():
     """Download the output folder as a zip file"""
-    import zipfile
     
     output_folder = "output"
     if not os.path.exists(output_folder):

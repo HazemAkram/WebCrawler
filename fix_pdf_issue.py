@@ -10,7 +10,7 @@ NEW_PDF = "omegamotor_catalog_en.pdf"
 # Walk through the output directory
 for root, dirs, files in os.walk(OUTPUT_DIR):
     for file in files:
-        if file.lower() == " omegamotor_catalog_en.pdf":
+        if file.lower() == "omegamotor_catalog_en.pdf":
             old_path = os.path.join(root, file)
             print(f"Replacing: {old_path}")
             try:

@@ -2,6 +2,7 @@
 *.csv
 __pycache__
 \output
+\CSVS
 *.png
 *.jpg
 *.icn

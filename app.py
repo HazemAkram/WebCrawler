@@ -19,6 +19,7 @@ from datetime import datetime
 import secrets
 from pathlib import Path
 import zipfile
+import tarfile
 
 
 # Import the crawling functions
@@ -243,6 +244,21 @@ def get_logs():
     """Get all logs"""
     return jsonify({'logs': crawling_status['logs']})
 
+@app.route('/archives/<path:filename>')
+def serve_archive(filename):
+    """Serve prepared .tar.gz archives from the archives directory"""
+    try:
+        archives_dir = os.path.join(os.getcwd(), 'archives')
+        # Security: ensure the requested file resolves under the archives directory
+        full_path = os.path.abspath(os.path.join(archives_dir, filename))
+        if not full_path.startswith(os.path.abspath(archives_dir)):
+            return "Access denied", 403
+        if not os.path.exists(full_path):
+            return "File not found", 404
+        return send_from_directory(archives_dir, filename, as_attachment=True)
+    except Exception as e:
+        return jsonify({'error': f'Error serving archive: {str(e)}'}), 500
+
 @app.route('/download_output')
 def download_output():
     """Download the output folder as a zip file"""
@@ -250,17 +266,38 @@ def download_output():
     output_folder = "output"
     if not os.path.exists(output_folder):
         return jsonify({'error': 'No output folder found'}), 404
-    
-    # Create a temporary zip file
+
+    # If "mode=link" is requested, create a persistent .tar.gz and return a short JSON with a URL
+    mode = request.args.get('mode')
+    if mode == 'link':
+        try:
+            archives_dir = os.path.join(os.getcwd(), 'archives')
+            os.makedirs(archives_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            archive_name = f"crawler_output_{timestamp}.tar.gz"
+            archive_path = os.path.join(archives_dir, archive_name)
+
+            # Build tar.gz archive without loading into memory
+            with tarfile.open(archive_path, "w:gz") as tar:
+                tar.add(output_folder, arcname=os.path.basename(output_folder))
+
+            # Return a short JSON containing a stable URL and absolute path for server-to-server fetches
+            return jsonify({
+                'success': True,
+                'archive_url': f"/archives/{archive_name}",
+                'archive_path': archive_path
+            })
+        except Exception as e:
+            return jsonify({'error': f'Failed to prepare archive: {str(e)}'}), 500
+
+    # Default: preserve existing behavior to return a downloadable zip stream (may be large)
     temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
-    
     with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk(output_folder):
             for file in files:
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, output_folder)
                 zipf.write(file_path, arcname)
-    
     return send_file(
         temp_zip.name,
         as_attachment=True,

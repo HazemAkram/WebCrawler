@@ -293,7 +293,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
         os.makedirs(csv_root, exist_ok=True)
 
         # Define columns
-        columns = ["productName", "productLink", "category"]
+        columns = ["productFolder", "productLink", "category"]
 
         for cat_name, products in category_to_products.items():
             if not products:
@@ -305,7 +305,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                 writer.writeheader()
                 for p in products:
                     writer.writerow({
-                        "productName": p.get("productName", ""),
+                        "productFolder": p.get("productName", ""),
                         "productLink": p.get("productLink", ""),
                         "category": p.get("category", cat_name),
                     })

@@ -308,26 +308,97 @@ def download_output():
 @app.route('/files')
 @app.route('/files/<path:subpath>')
 def file_explorer(subpath=''):
-    """File explorer for the output folder"""
+    """File explorer for the output, CSVS, and archives folders"""
     output_folder = "output"
+    csvs_folder = "CSVS"
+    archives_folder = "archives"
     
-    # Ensure the output folder exists
-    if not os.path.exists(output_folder):
-        return render_template('file_explorer.html', 
+    # Handle root level - show output, CSVS, and archives folders
+    if not subpath:
+        folders = []
+        files = []
+        
+        # Add output folder if it exists
+        if os.path.exists(output_folder):
+            folders.append({
+                'name': 'output',
+                'path': 'output',
+                'size': '--',
+                'modified': datetime.fromtimestamp(os.path.getmtime(output_folder)).strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        # Add CSVS folder if it exists
+        if os.path.exists(csvs_folder):
+            folders.append({
+                'name': 'CSVS',
+                'path': 'CSVS',
+                'size': '--',
+                'modified': datetime.fromtimestamp(os.path.getmtime(csvs_folder)).strftime('%Y-%m-%d %H:%M:%S')
+            })
+
+        # Add archives folder if it exists
+        if os.path.exists(archives_folder):
+            folders.append({
+                'name': 'archives',
+                'path': 'archives',
+                'size': '--',
+                'modified': datetime.fromtimestamp(os.path.getmtime(archives_folder)).strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        if not folders:
+            return render_template('file_explorer.html', 
+                                 current_path='',
+                                 files=[],
+                                 folders=[],
+                                 parent_path='',
+                                 error="No folders found")
+        
+        return render_template('file_explorer.html',
                              current_path='',
+                             files=files,
+                             folders=folders,
+                             parent_path='',
+                             error=None)
+    
+    # Determine which folder we're exploring
+    if subpath.startswith('output/'):
+        base_folder = output_folder
+        relative_path = subpath[7:]  # Remove 'output/' prefix
+    elif subpath.startswith('CSVS/'):
+        base_folder = csvs_folder
+        relative_path = subpath[5:]  # Remove 'CSVS/' prefix
+    elif subpath.startswith('archives/'):
+        base_folder = archives_folder
+        relative_path = subpath[9:]  # Remove 'archives/' prefix
+    elif subpath == 'output':
+        base_folder = output_folder
+        relative_path = ''
+    elif subpath == 'CSVS':
+        base_folder = csvs_folder
+        relative_path = ''
+    elif subpath == 'archives':
+        base_folder = archives_folder
+        relative_path = ''
+    else:
+        return "Invalid path", 400
+    
+    # Ensure the base folder exists
+    if not os.path.exists(base_folder):
+        return render_template('file_explorer.html', 
+                             current_path=subpath,
                              files=[],
                              folders=[],
                              parent_path='',
-                             error="Output folder not found")
+                             error=f"{base_folder} folder not found")
     
     # Build the full path
-    full_path = os.path.join(output_folder, subpath)
+    full_path = os.path.join(base_folder, relative_path)
     
-    # Security check: ensure the path is within the output folder
+    # Security check: ensure the path is within the base folder
     try:
         full_path = os.path.abspath(full_path)
-        output_folder_abs = os.path.abspath(output_folder)
-        if not full_path.startswith(output_folder_abs):
+        base_folder_abs = os.path.abspath(base_folder)
+        if not full_path.startswith(base_folder_abs):
             return "Access denied", 403
     except:
         return "Invalid path", 400
@@ -339,7 +410,7 @@ def file_explorer(subpath=''):
     # If it's a file, serve it
     if os.path.isfile(full_path):
         # Security: only allow safe file types
-        allowed_extensions = {'.pdf', '.txt', '.csv', '.json', '.zip', '.jpg', '.jpeg', '.png', '.gif'}
+        allowed_extensions = {'.pdf', '.txt', '.csv', '.json', '.zip', '.jpg', '.jpeg', '.png', '.gif', '.gz'}
         file_ext = os.path.splitext(full_path)[1].lower()
         
         if file_ext not in allowed_extensions:
@@ -413,7 +484,7 @@ def file_explorer(subpath=''):
 
 @app.route('/delete_item', methods=['POST'])
 def delete_item():
-    """Delete a file or folder from the output directory"""
+    """Delete a file or folder from the output, CSVS, or archives folder"""
     try:
         data = request.get_json()
         item_path = data.get('path', '')
@@ -421,15 +492,38 @@ def delete_item():
         if not item_path:
             return jsonify({'error': 'No path provided'}), 400
         
-        # Build the full path
-        output_folder = "output"
-        full_path = os.path.join(output_folder, item_path)
+        # Determine which folder we're working with
+        if item_path.startswith('output/'):
+            base_folder = "output"
+            relative_path = item_path[7:]  # Remove 'output/' prefix
+        elif item_path.startswith('CSVS/'):
+            base_folder = "CSVS"
+            relative_path = item_path[5:]  # Remove 'CSVS/' prefix
+        elif item_path.startswith('archives/'):
+            base_folder = "archives"
+            relative_path = item_path[9:]  # Remove 'archives/' prefix
+        elif item_path == 'output':
+            base_folder = "output"
+            relative_path = ''
+        elif item_path == 'CSVS':
+            base_folder = "CSVS"
+            relative_path = ''
+        elif item_path == 'archives':
+            base_folder = "archives"
+            relative_path = ''
+        else:
+            # Default to output folder for backward compatibility
+            base_folder = "output"
+            relative_path = item_path
         
-        # Security check: ensure the path is within the output folder
+        # Build the full path
+        full_path = os.path.join(base_folder, relative_path)
+        
+        # Security check: ensure the path is within the base folder
         try:
             full_path = os.path.abspath(full_path)
-            output_folder_abs = os.path.abspath(output_folder)
-            if not full_path.startswith(output_folder_abs):
+            base_folder_abs = os.path.abspath(base_folder)
+            if not full_path.startswith(base_folder_abs):
                 return jsonify({'error': 'Access denied'}), 403
         except:
             return jsonify({'error': 'Invalid path'}), 400

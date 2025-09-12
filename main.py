@@ -154,8 +154,8 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
 
                 # Enhanced pagination handling
                 page_number = get_page_number(url)
-                if page_number is None:
-                    page_number = 1  # Start from page 1 if no page number found
+                # if page_number is None:
+                #     page_number = 1  # Start from page 1 if no page number found
                 
                 # Detect pagination type for better handling
                 pagination_type = detect_pagination_type(url)

@@ -127,9 +127,74 @@ def sanitize_folder_name(product_name: str) -> str:
     return sanitized
 
 
+def generate_pdf_filename_from_llm_text(pdf_text: str, pdf_type: str, pdf_language: str, product_name: str) -> str:
+    """
+    Generate an appropriate filename for a PDF using LLM extracted text.
+    
+    Args:
+        pdf_text (str): The text extracted by LLM from the PDF link
+        pdf_type (str): The type of PDF (Data Sheet, Technical Drawing, etc.)
+        pdf_language (str): The language of the PDF
+        product_name (str): The name of the product for fallback naming
+        
+    Returns:
+        str: A sanitized filename with .pdf extension
+    """
+    
+    # Clean and prepare the text for filename
+    if pdf_text and pdf_text.strip():
+        # Use the LLM extracted text as base filename
+        base_filename = pdf_text.strip()
+        
+        # Remove common unwanted prefixes/suffixes
+        unwanted_patterns = [
+            r'^download\s*',
+            r'^pdf\s*',
+            r'^document\s*',
+            r'\s*download$',
+            r'\s*pdf$',
+            r'\s*document$',
+            r'^\d+\.\s*',  # Remove leading numbers like "1. "
+            r'^\d+\s*',    # Remove leading numbers
+        ]
+        
+        for pattern in unwanted_patterns:
+            base_filename = re.sub(pattern, '', base_filename, flags=re.IGNORECASE)
+        
+        # Clean up any extra whitespace
+        base_filename = base_filename.strip()
+        
+        # If the text becomes empty after cleaning, fall back to product name
+        if not base_filename:
+            base_filename = sanitize_folder_name(product_name)
+        
+        # Add type and language info for better identification
+        type_suffix = ""
+        if pdf_type and pdf_type.lower() not in ['unknown', '']:
+            type_suffix += f"_{pdf_type.replace(' ', '_')}"
+        
+        if pdf_language and pdf_language.lower() not in ['unknown', 'en', 'english']:
+            type_suffix += f"_{pdf_language.upper()}"
+        
+        # Combine base filename with type info
+        if type_suffix:
+            filename = f"{base_filename}{type_suffix}.pdf"
+        else:
+            filename = f"{base_filename}.pdf"
+    else:
+        # Fallback to product name if no text available
+        filename = f"{sanitize_folder_name(product_name)}.pdf"
+    
+    # Sanitize the filename
+    filename = sanitize_filename(filename)
+    
+    return filename
+
+
 def generate_pdf_filename(pdf_url: str, product_name: str) -> str:
     """
     Generate an appropriate filename for a PDF URL, handling extensionless URLs.
+    This is kept for backward compatibility but should be replaced with LLM-based naming.
     
     Args:
         pdf_url (str): The URL of the PDF file
@@ -422,8 +487,8 @@ async def download_pdf_links(
                 pdf_priority = pdf_info.get('priority', 'Unknown')
                 priority_emoji = "🔴" if pdf_priority == 'High' else "🟡" if pdf_priority == 'Medium' else "🟢"
                 log_message(f"{priority_emoji} Downloading PDF {i}/{len(pdf_links)}", "INFO")
-                # Enhanced filename generation for extensionless URLs
-                filename = generate_pdf_filename(pdf_url, product_name)
+                # Generate filename using LLM extracted text
+                filename = generate_pdf_filename_from_llm_text(pdf_text, pdf_type, pdf_language, product_name)
                 save_path = os.path.join(productPath, filename)
                 
                 # Check if this exact PDF URL has been downloaded before (global tracking)
@@ -431,7 +496,7 @@ async def download_pdf_links(
                     previous_path = download_pdf_links.downloaded_pdfs[pdf_url]
                     if os.path.exists(previous_path):
                         try:
-                            # Copy the previously cleaned PDF to current product folder
+                            # Copy the previously cleaned PDF to current product folder with new filename
                             shutil.copy2(previous_path, save_path)
                             log_message(f"📋 Copied cleaned PDF from previous download: {filename}", "INFO")
                             continue
@@ -652,6 +717,10 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
         str: URL with appropriate pagination parameter
     """
     try: 
+
+        if page_number is None:
+            return base_url
+        
         # Get pagination configuration
         pagination_config = DEFAULT_CONFIG.get("pagination_settings", {})
         items_per_page = pagination_config.get("items_per_page", 20)

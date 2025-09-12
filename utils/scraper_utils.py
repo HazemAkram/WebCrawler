@@ -988,10 +988,11 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
                 "• Technical Drawings (dimensional drawings, CAD drawings, schematics)\n"
                 "• Product Catalogs (product catalogs, brochures)\n\n"
                 
+                
                 "REQUIRED OUTPUT FIELDS:\n"
                 "For each valid document, provide:\n"
                 "• url: Complete download URL (convert relative URLs to absolute using the domain)\n"
-                "• text: Exact link text or document title as shown in HTML\n"
+                "• text: Make sure the pdf text is not empty and That is suitable for a path in the file system\n"
                 "• type: Must be one of: \"Data Sheet\", \"Technical Drawing\", or \"Catalog\"\n"
                 "• language: Document language code (\"EN\", \"DE\", \"TR\", etc.) or \"Unknown\"\n"
                 "• priority: \"High\" for Data Sheet/Technical Drawing, \"Medium\" for Catalog\n\n"

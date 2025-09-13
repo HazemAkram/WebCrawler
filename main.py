@@ -258,8 +258,10 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 'total_venues': len(all_venues)
                             })
 
+
+                        if page_number is not None:
                         # Increment page number for next iteration
-                        page_number += 1
+                            page_number += 1
                         
                         # Update current page for web interface
                         if status_callback:
@@ -286,33 +288,6 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     log_message(f"PDF LLM strategy usage: {pdf_llm_strategy.show_usage()}", "INFO")
     log_message(f"LLM strategy usage: {llm_strategy.show_usage()}", "INFO")
     log_message(f"Crawling completed. Total venues processed: {len(all_venues)}", "SUCCESS")
-
-    # After crawl: write per-category CSVs under CSVS directory
-    try:
-        csv_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CSVS")
-        os.makedirs(csv_root, exist_ok=True)
-
-        # Define columns
-        columns = ["productFolder", "productLink", "category"]
-
-        for cat_name, products in category_to_products.items():
-            if not products:
-                continue
-            safe_name = sanitize_folder_name(cat_name)
-            csv_path = os.path.join(csv_root, f"{safe_name}.csv")
-            with open(csv_path, mode="w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=columns)
-                writer.writeheader()
-                for p in products:
-                    writer.writerow({
-                        "productFolder": p.get("productName", ""),
-                        "productLink": p.get("productLink", ""),
-                        "category": p.get("category", cat_name),
-                    })
-            log_message(f"📝 Wrote category CSV: {csv_path}", "INFO")
-    except Exception as e:
-        log_message(f"⚠️ Failed writing category CSVs: {e}", "ERROR")
-
 async def main():
     log_message(f"{'='*50} Starting crawling {'='*50}", "INFO")
     await crawl_from_sites_csv("sites.csv")

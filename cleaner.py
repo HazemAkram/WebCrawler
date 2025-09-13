@@ -981,7 +981,6 @@ You are tasked to analyze the following text chunks and identify ALL instances o
 **CONTACT INFORMATION TO REMOVE:**
 - Website URLs and domain names
 - Physical addresses (full or partial) - remove the address text itself
-- Phone numbers (including international formats)
 - Fax numbers
 - Email addresses
 - Social media handles
@@ -1194,9 +1193,9 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         else:
             log_message("⚠️ cover.png not found, skipping cover page", "WARNING")
         
-        # Check if original PDF has more than 3 pages and conditionally remove last page
+        # Check if original PDF has more than 6 pages and conditionally remove last page
         original_pdf_size = len(pdf_images)
-        if original_pdf_size > 3:
+        if original_pdf_size > 6:
             final_images = final_images[:-1] 
         # Save final PDF
         final_path = f"{file_path}"

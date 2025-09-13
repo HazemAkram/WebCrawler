@@ -308,7 +308,7 @@ async def download_pdf_links(
         pdf_llm_strategy: LLMExtractionStrategy,
         pdf_selector: str,
         session_id="pdf_download_session", 
-        regex_strategy: RegexExtractionStrategy = None , 
+        regex_strategy: RegexExtractionStrategy = None,
         domain_name: str = None,
         api_key: str = None,
         cat_name: str = "Uncategorized",
@@ -346,7 +346,7 @@ async def download_pdf_links(
         log_message(f"📍 Using pdf selector: {pdf_selector}", "INFO")
 
 
-        product_url = f"{product_url}#documents"
+        product_url = f"{product_url}"
         # Crawl the page with CSS selector targeting PDF links
         pdf_result = await crawler.arun(
             url=product_url,
@@ -718,9 +718,10 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
     """
     try: 
 
-        if page_number is None:
+
+        if page_number == None: 
             return base_url
-        
+            
         # Get pagination configuration
         pagination_config = DEFAULT_CONFIG.get("pagination_settings", {})
         items_per_page = pagination_config.get("items_per_page", 20)
@@ -870,7 +871,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_width = 1080,  # Width of the browser viewport
         viewport_height = 720,  # Height of the browser viewport
         verbose=True,  # Enable verbose logging
@@ -931,7 +932,7 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instan
             "You are given HTML content that has already been filtered to include only the main product listing elements from an industrial or e-commerce website. This content was selected using a CSS selector, so it should primarily contain product cards, tiles, or grid items.\n"
             "\n"
             "Your task is to extract all valid product entries from this filtered HTML. For each product, extract the following fields:\n"
-            "- productName: The complete product name or title, exactly as displayed on the website.\n"
+            "- productName: The complete product name or title, exactly as displayed on the website, if it is showed more than one time, do not repeat product names more than once\n"
             "- productLink: The full, absolute URL to the product detail page, taken from the href attribute of an anchor tag within the product element.\n"
             "\n"
             "Extraction Rules:\n"
@@ -942,6 +943,7 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instan
             "- Do not guess or invent missing data; only extract what is present in the HTML.\n"
             "- Output a list of dictionaries, each matching the required schema.\n"
             "- If the url is incomplete, complete the url with the domain"
+            
             "Context:\n"
             "The HTML you receive is already focused on product elements, so you do not need to search the entire page—just extract structured product data from the provided content.\n"
             "Output a list of dictionaries, each matching the required schema.\n"
@@ -986,30 +988,31 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
                 "• if the same document is available in multiple languages, download only the English version\n"
                 "• Data Sheets (product specifications, technical data sheets) \n"
                 "• Technical Drawings (dimensional drawings, CAD drawings, schematics)\n"
+                "• User Manuals (user manuals, guides)\n"
                 "• Product Catalogs (product catalogs, brochures)\n\n"
+                
                 
                 
                 "REQUIRED OUTPUT FIELDS:\n"
                 "For each valid document, provide:\n"
                 "• url: Complete download URL (convert relative URLs to absolute using the domain)\n"
                 "• text: Make sure the pdf text is not empty and That is suitable for a path in the file system\n"
-                "• type: Must be one of: \"Data Sheet\", \"Technical Drawing\", or \"Catalog\"\n"
+                "• type: Must be one of: \"Data Sheet\", \"Technical Drawing\", \"Catalog\", or \"User Manual\"\n"
                 "• language: Document language code (\"EN\", \"DE\", \"TR\", etc.) or \"Unknown\"\n"
-                "• priority: \"High\" for Data Sheet/Technical Drawing, \"Medium\" for Catalog\n\n"
+                "• priority: \"High\" for Data Sheet/Technical Drawing/User Manual, \"Medium\" for Catalog\n\n"
                 
                 "EXTRACTION GUIDELINES:\n"
                 "✓ Look for <a> tags with href attributes pointing to downloadable documents\n"
-                "✓ Check for keywords: datasheet, specifications, drawings, catalog, brochure, manual\n"
+                "✓ Check for keywords: datasheet, specifications, drawings, catalog, brochure, manuals\n"
                 "✓ Extract exact text content - do not modify or paraphrase\n"
                 "✓ Convert relative URLs to absolute format\n"
                 "✓ Remove duplicates - same URL should appear only once\n"
-                "✓ Focus only on the three specified document types\n\n"
+                "✓ Focus only on the four specified document types\n\n"
                 
                 "WHAT TO IGNORE:\n"
                 "✗ Certificates, certifications, compliance documents\n"
                 "✗ Software downloads, apps, tools\n"
                 "✗ Marketing materials, press releases\n"
-                "✗ Installation guides, user manuals (unless they are technical drawings)\n"
                 "✗ Any non-PDF content\n\n"
                 
                 "OUTPUT FORMAT:\n"
@@ -1216,6 +1219,7 @@ async def fetch_and_process_page_with_js(
                 remove_overlay_elements=True,
                 session_id="js_extraction_session",
                 js_code=js_commands,
+                delay_before_return_html=3.0,
             )
         )
 

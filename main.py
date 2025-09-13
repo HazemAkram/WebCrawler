@@ -155,7 +155,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                 # Enhanced pagination handling
                 page_number = get_page_number(url)
                 # if page_number is None:
-                #     page_number = 1  # Start from page 1 if no page number found
+                #     page_number = 9999  # Start from page 1 if no page number found
                 
                 # Detect pagination type for better handling
                 pagination_type = detect_pagination_type(url)
@@ -221,7 +221,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 products_processed_with_pdf_crawler = 0
                                 log_message("🚀 Fresh PDF crawler instance started", "INFO")
 
-                            await asyncio.sleep(random.uniform(5, 15))
+                            await asyncio.sleep(random.uniform(10, 25))
                             venue_session_id = f"{session_id}_{venue['productName']}"
                             
                             log_message(f"📥 Downloading PDFs for: {venue['productName']}", "INFO")

@@ -1132,7 +1132,7 @@ async def fetch_and_process_page_with_js(
         let allRowsData = [];
         const rowSelectors = '{", ".join(elements)}';
         const buttonSelector = '{button_selector}';
-        const maxPages = 100;
+        const maxPages = 500;
         let currentPage = 1;
 
 

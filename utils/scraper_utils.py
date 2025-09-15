@@ -1169,7 +1169,7 @@ async def fetch_and_process_page_with_js(
                 currentPage++;
                 
                 // Wait for new content to load
-                await new Promise(r => setTimeout(r, 30000));
+                await new Promise(r => setTimeout(r, 9000));
                 
                 // Extract new page data
                 const newPageData = extractRows();

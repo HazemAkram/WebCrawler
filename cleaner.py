@@ -37,8 +37,8 @@ OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 =
 OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
-FOOTER_HEIGHT_RATIO = 0.3  # Footer height as ratio of page height (15% of page)
-FOOTER_MIN_HEIGHT = 1      # Minimum footer height in pixels
+FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
+FOOTER_MIN_HEIGHT = 20      # Minimum footer height in pixels
 FOOTER_MAX_HEIGHT = 200      # Maximum footer height in pixels
 FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
 
@@ -341,6 +341,26 @@ def estimate_background_color(img, bbox):
     bg_patch = img[y0:y1, x0:x1]
     return np.median(bg_patch, axis=(0, 1)) if bg_patch.size > 0 else [255, 255, 255]
 
+def estimate_footer_background_color(img_cv, footer_bbox):
+    """
+    Estimate footer background color from the footer area itself, robust to dark text.
+    Prefers background pixels via Otsu threshold; falls back to median of the region.
+    """
+    x, y, w, h = footer_bbox
+    region = img_cv[y:y+h, x:x+w]
+    if region.size == 0:
+        return estimate_background_color(img_cv, footer_bbox)
+    try:
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        bg_mask = bin_img == 255  # light areas = likely background
+        if np.count_nonzero(bg_mask) > 0.1 * bg_mask.size:
+            bg_pixels = region[bg_mask]
+            return np.median(bg_pixels, axis=0)
+    except Exception:
+        pass
+    return np.median(region, axis=(0, 1))
+
 def remove_region(img, bbox, padding=0):
     """Removes specified region by filling with background color"""
     x, y, w, h = bbox
@@ -373,9 +393,9 @@ def detect_footer_area(img_cv):
     # Method 1: Edge detection to find text boundaries
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
     
-    # Apply Gaussian blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    
+    # # Apply Gaussian blur to reduce noise
+    # blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    blurred = gray
     # Edge detection with multiple thresholds
     edges = cv2.Canny(blurred, 50, 150, apertureSize=3)
     
@@ -550,11 +570,8 @@ def remove_footer_area(img_cv, page_num, groq_client=None):
             bg_samples.append(np.median(right_sample, axis=(0, 1)))
     
     # Use area around footer for background estimation if no other samples
-    if not bg_samples:
-        bg_color = estimate_background_color(img_cv, footer_bbox)
-    else:
-        # Average all background samples
-        bg_color = np.mean(bg_samples, axis=0)
+        # Estimate background strictly from the footer region
+    bg_color = estimate_footer_background_color(img_cv, footer_bbox)
     
     # Apply some smoothing to avoid harsh edges
     result_img = img_cv.copy()
@@ -661,6 +678,27 @@ def enhance_image_for_ocr(image, bottom_25_percent_only=True):
         # Convert back to PIL format
         return Image.fromarray(enhanced)
 
+def enhance_image_region(image, region="bottom"):
+    """
+    Enhance a vertical region (top or bottom 25%) of the image for OCR.
+    Returns a PIL grayscale image of the selected region.
+    """
+    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
+    if region == "top":
+        region_img = gray[: int(height * OCR_BOTTOM_REGION_RATIO), :]
+    else:
+        start = int(height * OCR_REGION_START_RATIO)
+        region_img = gray[start:, :]
+    text_value, centers, hist = kmeans(region_img, k=4, i_val=1)
+    enhanced = region_img.copy()
+    text_mask = region_img < text_value + 20
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced_clahe = clahe.apply(region_img)
+    enhanced[text_mask] = enhanced_clahe[text_mask]
+    return Image.fromarray(enhanced)
+
 def replace_text_in_scanned_pdf_ai(images, api_key: str):
     """
     Automatically removes contact information using AI analysis.
@@ -688,14 +726,18 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         original_height = img_cv.shape[0]  # Store original image height for coordinate adjustment
         
-        # First, perform OCR analysis on original image (bottom 25% only)
-        enhanced_img = enhance_image_for_ocr(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), bottom_25_percent_only=True)
-        
-        # Extract text from enhanced image with position data (bottom 25% region only)
-        data = pytesseract.image_to_data(enhanced_img, output_type=pytesseract.Output.DICT)
-        
-        # Create contextual text chunks with bounding box information (adjust coordinates for bottom 25% processing)
-        text_chunks = create_contextual_text_chunks(data, original_image_height=original_height, bottom_25_percent_only=True)
+        # Perform OCR on bottom 25% region
+        enhanced_bottom = enhance_image_region(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), region="bottom")
+        data_bottom = pytesseract.image_to_data(enhanced_bottom, output_type=pytesseract.Output.DICT)
+        bottom_chunks = create_contextual_text_chunks(data_bottom, original_image_height=original_height, bottom_25_percent_only=True)
+
+        # Perform OCR on top 25% region
+        enhanced_top = enhance_image_region(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), region="top")
+        data_top = pytesseract.image_to_data(enhanced_top, output_type=pytesseract.Output.DICT)
+        top_chunks = create_contextual_text_chunks(data_top, original_image_height=original_height, bottom_25_percent_only=False)
+
+        # Merge chunks from both regions
+        text_chunks = (bottom_chunks or []) + (top_chunks or [])
         
         if not text_chunks:
             print(f"   Page {page_num}: No text chunks found")
@@ -705,7 +747,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
             modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
             continue
         
-        print(f"   Page {page_num}: Created {len(text_chunks)} contextual text chunks")
+        print(f"   Page {page_num}: Created {len(text_chunks)} contextual text chunks (bottom: {len(bottom_chunks)}, top: {len(top_chunks)})")
         
         # Use AI to analyze the text chunks and identify what should be removed
         ai_analysis = analyze_text_with_ai_chunks(text_chunks, groq_client)
@@ -797,18 +839,26 @@ def create_contextual_text_chunks(data, original_image_height=None, bottom_25_pe
     
     # Process text elements in reading order (top to bottom, left to right)
     text_elements = []
+    def _to_int(val, default=0):
+        try:
+            return int(float(val))
+        except Exception:
+            return default
     for i in range(len(data['text'])):
-        if data['text'][i].strip():  # Only process non-empty text
-            # Adjust coordinates if processing bottom 25% only
-            adjusted_top = data['top'][i] + y_offset if bottom_25_percent_only else data['top'][i]
-            
+        if str(data['text'][i]).strip():
+            left = _to_int(data.get('left', [0])[i])
+            top_val = _to_int(data.get('top', [0])[i])
+            width = _to_int(data.get('width', [0])[i])
+            height = _to_int(data.get('height', [0])[i])
+            conf = _to_int(data.get('conf', [0])[i], default=-1)
+            adjusted_top = top_val + y_offset if bottom_25_percent_only else top_val
             text_elements.append({
-                'text': data['text'][i].strip(),
-                'left': data['left'][i],
-                'top': adjusted_top,  # Adjusted top coordinate
-                'width': data['width'][i],
-                'height': data['height'][i],
-                'conf': data['conf'][i] if 'conf' in data else 0
+                'text': str(data['text'][i]).strip(),
+                'left': left,
+                'top': adjusted_top,
+                'width': width,
+                'height': height,
+                'conf': conf
             })
     
     # Sort by position (top to bottom, then left to right)
@@ -981,7 +1031,7 @@ You are tasked to analyze the following text chunks and identify ALL instances o
 **CONTACT INFORMATION TO REMOVE:**
 - Website URLs and domain names
 - Physical addresses (full or partial) - remove the address text itself
-- Fax numbers
+- Fax and phone numbers
 - Email addresses
 - Social media handles
 - Contact person names with titles

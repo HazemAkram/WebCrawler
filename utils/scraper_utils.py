@@ -568,7 +568,21 @@ async def download_pdf_links(
                             
                             async with aiofiles.open(save_path, "wb") as f:
                                 await f.write(content)
-                            
+
+
+                            # post-download certifictaions filter 
+                            lowered = os.path.basename(save_path).lower()
+                            cert_terms = [
+                                'certificate','certification','certifications','iso','tse', 'declaration', 
+                                'coc','iec','ce','emc','ped','fda','rohs','iecex','csa','warranty'
+                            ]
+                            if any(term in lowered for term in cert_terms): 
+                                try: 
+                                    os.remove(save_path)
+                                    log_message(f"⏭️ Removed certificate PDF: {os.path.basename(save_path)}", "INFO")
+                                except Exception as e:
+                                    log_message(f"⚠️ Failed to remove certificate PDF: {os.path.basename(save_path)}: {str(e)}", "WARNING")
+                                continue
                             # Mark this URL as downloaded with its file path
                             download_pdf_links.downloaded_pdfs[pdf_url] = save_path
 
@@ -1006,15 +1020,19 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
                 "✓ Convert relative URLs to absolute format\n"
                 "✓ Remove duplicates - same URL should appear only once\n"
                 "✓ Focus only on the four specified document types\n\n"
+                "✓ If the same document is available in multiple languages, download only the English version\n"
+                "✓ If there are nothing but certificates, certifications, compliance documents, etc., return empty.\n"
                 
                 "WHAT TO IGNORE:\n"
                 "✗ Certificates, certifications, compliance documents\n"
+                "✗ If there are nothing but certificates, certifications, compliance documents, etc., return empty.\n"
                 "✗ Software downloads, apps, tools\n"
                 "✗ Marketing materials, press releases\n"
                 "✗ Any non-PDF content\n\n"
                 
                 "OUTPUT FORMAT:\n"
-                "Return a JSON array of objects matching the schema. If no valid documents are found, return an empty array [].\n\n"
+                "- Return a JSON array of objects matching the schema. If no valid documents are found, return an empty array [].\n"
+                "- If there are nothing but certificates, certifications, compliance documents, etc., return empty.\n\n"
     
         ),
         input_format="markdown",  # Format of the input content

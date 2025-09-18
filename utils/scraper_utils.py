@@ -497,21 +497,21 @@ async def download_pdf_links(
                 filename = generate_pdf_filename_from_llm_text(pdf_text, pdf_type, pdf_language, derived_product_name)
                 save_path = os.path.join(productPath, filename)
                 
-                # # Check if this exact PDF URL has been downloaded before (global tracking)
-                # if pdf_url in download_pdf_links.downloaded_pdfs:
-                #     previous_path = download_pdf_links.downloaded_pdfs[pdf_url]
-                #     if os.path.exists(previous_path):
-                #         try:
-                #             # Copy the previously cleaned PDF to current product folder with new filename
-                #             shutil.copy2(previous_path, save_path)
-                #             log_message(f"📋 Copied cleaned PDF from previous download: {filename}", "INFO")
-                #             continue
-                #         except Exception as copy_error:
-                #             log_message(f"⚠️ Failed to copy cleaned PDF: {str(copy_error)}", "WARNING")
-                #             log_message(f"   Will re-download and process: {filename}", "INFO")
-                #     else:
-                #         log_message(f"⚠️ Previously downloaded PDF not found at: {previous_path}", "WARNING")
-                #         log_message(f"   Will re-download and process: {filename}", "INFO")
+                # Check if this exact PDF URL has been downloaded before (global tracking)
+                if pdf_url in download_pdf_links.downloaded_pdfs:
+                    previous_path = download_pdf_links.downloaded_pdfs[pdf_url]
+                    if os.path.exists(previous_path):
+                        try:
+                            # Copy the previously cleaned PDF to current product folder with new filename
+                            shutil.copy2(previous_path, save_path)
+                            log_message(f"📋 Copied cleaned PDF from previous download: {filename}", "INFO")
+                            continue
+                        except Exception as copy_error:
+                            log_message(f"⚠️ Failed to copy cleaned PDF: {str(copy_error)}", "WARNING")
+                            log_message(f"   Will re-download and process: {filename}", "INFO")
+                    else:
+                        log_message(f"⚠️ Previously downloaded PDF not found at: {previous_path}", "WARNING")
+                        log_message(f"   Will re-download and process: {filename}", "INFO")
                 
                 # # Check if file already exists in the product folder
                 # if os.path.exists(save_path):

@@ -8,7 +8,7 @@ See NOTICE file for additional terms and conditions.
 """
 
 
-from flask import Flask, render_template, request, jsonify, send_file, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, session, redirect, url_for
 import os
 import asyncio
 import threading
@@ -35,6 +35,8 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 
 # SECURITY: Disable debug mode in production
 DEBUG_MODE = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+# SECURITY: Simple password gate (optional). Set FLASK_APP_PASSWORD env var.
+APP_PASSWORD = os.environ.get('FLASK_APP_PASSWORD')
 
 # Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -71,6 +73,76 @@ def log_message(message, level="INFO"):
         crawling_status['logs'] = crawling_status['logs'][-1000:]
 
 def allowed_file(filename):
+    """Check if uploaded file has allowed extension"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() == 'csv'
+@app.before_request
+def require_login():
+    """Require login if APP_PASSWORD is set. Allow login/logout, static and archives endpoints."""
+    if not APP_PASSWORD:
+        return
+    allowed_paths = {
+        url_for('login'),
+        url_for('logout'),
+        '/archives',
+    }
+    path = request.path
+    # Allow static files and archives serving
+    if path.startswith('/static') or path.startswith('/archives'):
+        return
+    # Allow login route
+    if path == url_for('login'):
+        return
+    # Enforce session auth
+    if not session.get('authenticated'):
+        return redirect(url_for('login'))
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Minimal inline login form to gate the app when APP_PASSWORD is set."""
+    if not APP_PASSWORD:
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == APP_PASSWORD:
+            session['authenticated'] = True
+            return redirect(url_for('index'))
+        return ("""
+<!DOCTYPE html>
+<html><head><meta charset='utf-8'><title>Login</title></head>
+<body style="font-family:Segoe UI,Arial,sans-serif;background:#f5f7fb;">
+  <div style="max-width:380px;margin:10% auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08);">
+    <h2 style="margin:0 0 12px;color:#111827;">DeepSeek AI Web Crawler</h2>
+    <p style="margin:0 0 16px;color:#6b7280;">Please enter the password to continue.</p>
+    <form method="post">
+      <input type="password" name="password" placeholder="Password" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;">
+      <button type="submit" style="width:100%;padding:12px;border:none;border-radius:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;cursor:pointer;">Login</button>
+    </form>
+    <p style="margin-top:10px;color:#ef4444;">Invalid password</p>
+  </div>
+  </body></html>
+        """), 401
+    # GET request -> show form
+    return """
+<!DOCTYPE html>
+<html><head><meta charset='utf-8'><title>Login</title></head>
+<body style="font-family:Segoe UI,Arial,sans-serif;background:#f5f7fb;">
+  <div style="max-width:380px;margin:10% auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08);">
+    <h2 style="margin:0 0 12px;color:#111827;">DeepSeek AI Web Crawler</h2>
+    <p style="margin:0 0 16px;color:#6b7280;">Please enter the password to continue.</p>
+    <form method="post">
+      <input type="password" name="password" placeholder="Password" style="width:100%;padding:12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;">
+      <button type="submit" style="width:100%;padding:12px;border:none;border-radius:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600;cursor:pointer;">Login</button>
+    </form>
+  </div>
+</body></html>
+    """
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    if APP_PASSWORD:
+        return redirect(url_for('login'))
+    return redirect(url_for('index'))
     """Check if uploaded file has allowed extension"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() == 'csv'
 

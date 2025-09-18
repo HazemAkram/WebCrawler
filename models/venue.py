@@ -16,7 +16,6 @@ class Venue(BaseModel):
     Represents the data structure of a Venue.
     """
 
-    productName: str
     productLink: str
 
 
@@ -30,6 +29,7 @@ class PDF(BaseModel):
     type: str
     language: str
     priority: str
+    productName: str
 
 
 class TextRemove(BaseModel):

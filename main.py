@@ -62,13 +62,20 @@ def read_sites_from_csv(input_file):
     with open(input_file, encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=',')
         for row in reader:
+            css_list = [s.strip() for s in row['css_selector'].split('|') if s.strip()] if row.get('css_selector') else []
+            pdf_list = [s.strip() for s in row['pdf_selector'].split('|') if s.strip()] if row.get('pdf_selector') else []
+            # Optional name selector to extract product name on product page
+            name_selector = row.get('name_selector', '').strip()
+            if name_selector:
+                # Ensure name selector is available to the PDF LLM by adding it to the target elements list
+                pdf_list.append(name_selector)
+
             sites.append({
                 "url": row["url"],
-                "cat_name": row.get("cat_name", "Uncategorized"),  # Add category name from CSV
-                "css_selector": [s.strip() for s in row['css_selector'].split('|') if s.strip()],
-                "pdf_selector": [s.strip() for s in row['pdf_selector'].split('|') if s.strip()],  # Add pdf_selector with fallback
-                "button_selector": row["button_selector"],
-                
+                "cat_name": row.get("cat_name", "Uncategorized"),
+                "css_selector": css_list,
+                "pdf_selector": pdf_list,
+                "button_selector": row.get("button_selector", ""),
             })
     return sites
 
@@ -108,7 +115,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     all_venues = []
     # Track products per category for CSV export
     category_to_products = {}
-    seen_names = set()
+    seen_links = set()
     
     # PDF crawler management
     pdf_crawler = None
@@ -180,7 +187,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 button_selector=button_selector,
                                 elements=css_selector,
                                 required_keys=REQUIRED_KEYS,
-                                seen_names=seen_names,
+                                seen_names=seen_links,
                             )
                         else:
                             # For URL-based pagination, construct the paged URL
@@ -195,7 +202,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 llm_strategy = llm_strategy,
                                 session_id = f"{session_id}_{page_number}",
                                 required_keys = REQUIRED_KEYS,
-                                seen_names = seen_names,
+                                seen_names = seen_links,
                             )
 
                         if no_results or not venues:
@@ -222,15 +229,13 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 log_message("🚀 Fresh PDF crawler instance started", "INFO")
 
                             await asyncio.sleep(random.uniform(10, 25))
-                            venue_session_id = f"{session_id}_{venue['productName']}"
-                            
-                            log_message(f"📥 Downloading PDFs for: {venue['productName']}", "INFO")
+                            venue_session_id = f"{session_id}_{hash(venue['productLink'])}"
+                            log_message(f"📥 Processing product page for PDFs: {venue['productLink']}", "INFO")
                             
                             try:
                                 await download_pdf_links(
                                     pdf_crawler,  # Use dedicated PDF crawler
                                     product_url=venue["productLink"],
-                                    product_name=venue["productName"],
                                     output_folder="output",
                                     pdf_selector=site["pdf_selector"],  # Add pdf_selector from CSV
                                     session_id=venue_session_id,

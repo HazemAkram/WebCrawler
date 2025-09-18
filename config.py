@@ -8,9 +8,8 @@ See NOTICE file for additional terms and conditions.
 """
 
 
-# Required keys for product extraction
+# Required keys for product extraction (category pages now return only links)
 REQUIRED_KEYS = [
-    "productName",
     "productLink",
 ]
 
@@ -20,6 +19,7 @@ PDF_KEYS = [
     "type",
     "language",
     "priority",
+    "productName",
 ]
 
 TEXT_REMOVE_KEYS = [

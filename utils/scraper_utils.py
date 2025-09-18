@@ -303,10 +303,9 @@ def sanitize_filename(filename: str) -> str:
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
         product_url: str, 
-        product_name: str,
         output_folder: str, 
         pdf_llm_strategy: LLMExtractionStrategy,
-        pdf_selector: str,
+        pdf_selector: str | list,
         session_id="pdf_download_session", 
         regex_strategy: RegexExtractionStrategy = None,
         domain_name: str = None,
@@ -342,8 +341,8 @@ async def download_pdf_links(
         download_pdf_links.downloaded_pdfs = {}  # Change from set to dict: {url: file_path}
 
     try:
-        log_message(f"🔍 Starting PDF extraction for product: {product_name}", "INFO")
-        log_message(f"📍 Using pdf selector: {pdf_selector}", "INFO")
+        log_message(f"🔍 Starting PDF extraction for product page", "INFO")
+        log_message(f"📍 Using selectors: {pdf_selector}", "INFO")
 
 
         product_url = f"{product_url}"
@@ -363,7 +362,7 @@ async def download_pdf_links(
         )
 
         if not pdf_result.success or not pdf_result.extracted_content:
-            log_message(f"❌ Failed to extract PDF content for product: {product_name}", "ERROR")
+            log_message(f"❌ Failed to extract PDF content from product page", "ERROR")
             log_message(f"🔗 Product URL: {product_url}", "INFO")
             return
 
@@ -375,10 +374,17 @@ async def download_pdf_links(
             return
 
         if not extracted_data:
-            log_message(f"📭 No PDFs found for product: {product_name}", "INFO")
+            log_message(f"📭 No PDFs found on product page", "INFO")
             return
 
         log_message(f"🔗 Found {len(extracted_data)} potential PDF(s) via CSS selector", "INFO")
+
+        # Derive product name from extracted items
+        extracted_names = [item.get('productName', '') for item in extracted_data if item.get('productName')]
+        if extracted_names:
+            derived_product_name = extracted_names[0]
+        else:
+            derived_product_name = "Unnamed Product"
 
         # Step 3: Process each PDF link to download it
         pdf_links = []
@@ -417,11 +423,11 @@ async def download_pdf_links(
 
         # Check if any PDFs were found
         if not pdf_links:
-            log_message(f"📭 No PDFs found on page for product: {product_name}", "INFO")
+            log_message(f"📭 No PDFs found on page for product: {derived_product_name}", "INFO")
             log_message(f"🔗 Product URL: {product_url}", "INFO")
             return  # Exit early without creating any folders
 
-        log_message(f"📄 Found {len(pdf_links)} PDF(s) for product: {product_name}", "INFO")
+        log_message(f"📄 Found {len(pdf_links)} PDF(s) for product: {derived_product_name}", "INFO")
 
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
@@ -431,10 +437,10 @@ async def download_pdf_links(
         category_path = os.path.join(output_folder, sanitized_cat_name)
         os.makedirs(category_path, exist_ok=True)
         
-        productPath = os.path.join(category_path, sanitize_folder_name(product_name))
+        productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
         if not os.path.exists(productPath):
             os.makedirs(productPath)
-            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(product_name)}", "INFO")
+            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
 
 
         # Enhanced sorting: Priority first, then by document type preference, then by language
@@ -488,7 +494,7 @@ async def download_pdf_links(
                 priority_emoji = "🔴" if pdf_priority == 'High' else "🟡" if pdf_priority == 'Medium' else "🟢"
                 log_message(f"{priority_emoji} Downloading PDF {i}/{len(pdf_links)}", "INFO")
                 # Generate filename using LLM extracted text
-                filename = generate_pdf_filename_from_llm_text(pdf_text, pdf_type, pdf_language, product_name)
+                filename = generate_pdf_filename_from_llm_text(pdf_text, pdf_type, pdf_language, derived_product_name)
                 save_path = os.path.join(productPath, filename)
                 
                 # # Check if this exact PDF URL has been downloaded before (global tracking)
@@ -885,7 +891,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         verbose=True,  # Enable verbose logging
         user_agent = user_agent,  # Custom headers to include
         extra_args=[
@@ -941,25 +947,11 @@ def get_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-instan
         schema=Venue.model_json_schema(),  # JSON schema of the data model
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
-            "You are given HTML content that has already been filtered to include only the main product listing elements from an industrial or e-commerce website. This content was selected using a CSS selector, so it should primarily contain product cards, tiles, or grid items.\n"
-            "\n"
-            "Your task is to extract all valid product entries from this filtered HTML. For each product, extract the following fields:\n"
-            "- productName: The complete product name or title, exactly as displayed on the website, if it is showed more than one time, do not repeat product names more than once\n"
-            "- productLink: The full, absolute URL to the product detail page, taken from the href attribute of an anchor tag within the product element.\n"
-            "\n"
-            "Extraction Rules:\n"
-            "- Only include entries that have both a productName and a productLink.\n"
-            "- Use the exact product name as shown in the HTML—do not paraphrase or guess.\n"
-            "- For productLink, always use the value from the href attribute and convert relative URLs to absolute URLs using the website domain.\n"
-            "- Do not include categories, collections, or non-product items.\n"
-            "- Do not guess or invent missing data; only extract what is present in the HTML.\n"
-            "- Output a list of dictionaries, each matching the required schema.\n"
-            "- If the url is incomplete, complete the url with the domain"
-            
-            "Context:\n"
-            "The HTML you receive is already focused on product elements, so you do not need to search the entire page—just extract structured product data from the provided content.\n"
-            "Output a list of dictionaries, each matching the required schema.\n"
-
+            "You are given filtered HTML for product listings (cards/tiles).\n"
+            "Extract only product links.\n"
+            "For each product, output an object with: productLink (absolute URL from an <a href>).\n"
+            "Convert relative URLs to absolute using the page domain.\n"
+            "Return a JSON array matching the schema."
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging
@@ -992,48 +984,15 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
         schema=PDF.model_json_schema(),
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
-               "You are a technical document extraction specialist. Your task is to analyze HTML content and extract PDF download links for technical documents.\n\n"
-    
-                "OBJECTIVE:\n"
-                "Extract downloadable English PDF documents that are:\n"
-                "• Only English documents if the document is not in English, Download in the given language\n"
-                "• if the same document is available in multiple languages, download only the English version\n"
-                "• Data Sheets (product specifications, technical data sheets) \n"
-                "• Technical Drawings (dimensional drawings, CAD drawings, schematics)\n"
-                "• User Manuals (user manuals, guides)\n"
-                "• Product Catalogs (product catalogs, brochures)\n\n"
-                
-                
-                
-                "REQUIRED OUTPUT FIELDS:\n"
-                "For each valid document, provide:\n"
-                "• url: Complete download URL (convert relative URLs to absolute using the domain)\n"
-                "• text: Make sure the pdf text is not empty and That is suitable for a path in the file system\n"
-                "• type: Must be one of: \"Data Sheet\", \"Technical Drawing\", \"Catalog\", or \"User Manual\"\n"
-                "• language: Document language code (\"EN\", \"DE\", \"TR\", etc.) or \"Unknown\"\n"
-                "• priority: \"High\" for Data Sheet/Technical Drawing/User Manual, \"Medium\" for Catalog\n\n"
-                
-                "EXTRACTION GUIDELINES:\n"
-                "✓ Look for <a> tags with href attributes pointing to downloadable documents\n"
-                "✓ Check for keywords: datasheet, specifications, drawings, catalog, brochure, manuals\n"
-                "✓ Extract exact text content - do not modify or paraphrase\n"
-                "✓ Convert relative URLs to absolute format\n"
-                "✓ Remove duplicates - same URL should appear only once\n"
-                "✓ Focus only on the four specified document types\n\n"
-                "✓ If the same document is available in multiple languages, download only the English version\n"
-                "✓ If there are nothing but certificates, certifications, compliance documents, etc., return empty.\n"
-                
-                "WHAT TO IGNORE:\n"
-                "✗ Certificates, certifications, compliance documents\n"
-                "✗ If there are nothing but certificates, certifications, compliance documents, etc., return empty.\n"
-                "✗ Software downloads, apps, tools\n"
-                "✗ Marketing materials, press releases\n"
-                "✗ Any non-PDF content\n\n"
-                
-                "OUTPUT FORMAT:\n"
-                "- Return a JSON array of objects matching the schema. If no valid documents are found, return an empty array [].\n"
-                "- If there are nothing but certificates, certifications, compliance documents, etc., return empty.\n\n"
-    
+            "You are given filtered HTML from a product page, including elements for the product name (via provided selectors)"
+            " and anchors for downloadable technical documents.\n"
+            "Extract technical PDFs and the product name. For each document, output: url, text, type, language, priority, productName.\n"
+            "- productName: the exact product title text from the product name element(s).\n"
+            "- url: absolute link to the PDF. Convert relative links using the page domain.\n"
+            "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual.\n"
+            "- language: language code like EN/DE/TR or Unknown.\n"
+            "- priority: High for Data Sheet/Technical Drawing/User Manual, Medium for Catalog.\n"
+            "Ignore certificates/compliance-only links. Return a JSON array matching the schema."
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging
@@ -1110,16 +1069,16 @@ async def fetch_and_process_page(
         if not is_complete_venue(venue, required_keys):
             continue  # Skip incomplete venues
 
-        if is_duplicate_venue(venue["productName"], seen_names):
-            log_message(f"Duplicate venue '{venue['productName']}' found. Skipping.", "INFO")
+        # Use productLink for duplicate detection
+        if is_duplicate_venue(venue.get("productLink", ""), seen_names):
+            log_message(f"Duplicate link '{venue.get('productLink','')}' found. Skipping.", "INFO")
             continue  # Skip duplicate venues
 
         # Add venue to the list
-        seen_names.add(venue["productName"])
-
         if "productLink" in venue:
-            venue["productLink"] = venue["productLink"].replace("/en/en/", "/en/")
-
+            link = venue["productLink"].replace("/en/en/", "/en/")
+            venue["productLink"] = link
+            seen_names.add(link)
             complete_venues.append(venue)
 
     if not complete_venues:
@@ -1275,12 +1234,12 @@ async def fetch_and_process_page_with_js(
                     product.pop("error", None)
                 if not is_complete_venue(product, required_keys):
                     continue
-                if is_duplicate_venue(product["productName"], seen_names):
-                    log_message(f"\tDuplicate: {product['productName']}", "INFO")
+                if is_duplicate_venue(product.get("productLink",""), seen_names):
+                    log_message(f"\tDuplicate link: {product.get('productLink','')}", "INFO")
                     continue
                 if "productLink" in product:
                     product["productLink"] = product["productLink"].replace("/en/en/", "/en/")
-                seen_names.add(product["productName"])
+                    seen_names.add(product["productLink"])
                 complete_venues.append(product)
                 new_products += 1
             log_message(f"\tAdded {new_products} unique products", "INFO")

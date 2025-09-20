@@ -495,6 +495,7 @@ async def download_pdf_links(
                 log_message(f"{priority_emoji} Downloading PDF {i}/{len(pdf_links)}", "INFO")
                 # Generate filename using LLM extracted text
                 filename = generate_pdf_filename_from_llm_text(pdf_text, pdf_type, pdf_language, derived_product_name)
+                filename = filename.replace('\\', '_').replace('/', '_')
                 save_path = os.path.join(productPath, filename)
                 
                 # Check if this exact PDF URL has been downloaded before (global tracking)
@@ -892,6 +893,8 @@ def get_browser_config() -> BrowserConfig:
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
         headless=True,  # Whether to run in headless mode (no GUI)
+        viewport_height=1080,
+        viewport_width=1920,
         verbose=True,  # Enable verbose logging
         user_agent = user_agent,  # Custom headers to include
         extra_args=[

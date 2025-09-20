@@ -440,7 +440,7 @@ async def download_pdf_links(
         productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
         if not os.path.exists(productPath):
             os.makedirs(productPath)
-            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
+            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{str(sanitize_folder_name(derived_product_name))}", "INFO")
 
 
         # Enhanced sorting: Priority first, then by document type preference, then by language

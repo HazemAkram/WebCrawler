@@ -104,12 +104,10 @@ def sanitize_folder_name(product_name: str) -> str:
     # Common problematic characters: \ / : * ? " < > |
     
     # Replace backslashes and forward slashes with underscores
-    sanitized = product_name.replace('\\', '/')   
-    
-    # sanitized = product_name.replace('/', '_') # (if you are working with windows uncomment this)
+    sanitized = product_name.replace('\\', '/').replace('/', '_') # (if you are working with windows uncomment this)
     
     # Replace other invalid characters
-    invalid_chars = r'[<>:"|?*]'
+    invalid_chars = r'[<>:"?*]'
     sanitized = re.sub(invalid_chars, '_', sanitized)
     
     # Remove leading/trailing spaces and dots

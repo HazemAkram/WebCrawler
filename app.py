@@ -89,6 +89,9 @@ def require_login():
     # Allow static files and archives serving
     if path.startswith('/static') or path.startswith('/archives'):
         return
+    # Allow file explorer access to archives folder
+    if path.startswith('/files/archives'):
+        return
     # Allow login route
     if path == url_for('login'):
         return

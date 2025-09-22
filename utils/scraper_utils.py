@@ -425,7 +425,7 @@ async def download_pdf_links(
         if not pdf_links:
             log_message(f"📭 No PDFs found on page for product: {derived_product_name}", "INFO")
             log_message(f"🔗 Product URL: {product_url}", "INFO")
-            return  # Exit early without creating any folders
+            return {"productLink": product_url, "productName": derived_product_name, "category": cat_name, "saved_count": 0, "has_datasheet": False}
 
         log_message(f"📄 Found {len(pdf_links)} PDF(s) for product: {derived_product_name}", "INFO")
 
@@ -483,7 +483,8 @@ async def download_pdf_links(
 
         # Download each PDF with duplicate checking (SSL verification disabled)
         log_message(f"📥 Starting download of {len(pdf_links)} PDF documents", "INFO")
-
+        saved_files = []
+        has_datasheet = False
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             for i, pdf_info in enumerate(pdf_links, 1):
                 pdf_url = pdf_info['url']
@@ -506,6 +507,10 @@ async def download_pdf_links(
                             # Copy the previously cleaned PDF to current product folder with new filename
                             shutil.copy2(previous_path, save_path)
                             log_message(f"📋 Copied cleaned PDF from previous download: {filename}", "INFO")
+                            saved_files.append(save_path)
+                            # mark datasheet if type matches
+                            if pdf_type and ('data sheet' in pdf_type.lower() or 'datasheet' in pdf_type.lower() or 'specification' in pdf_type.lower()):
+                                has_datasheet = True
                             continue
                         except Exception as copy_error:
                             log_message(f"⚠️ Failed to copy cleaned PDF: {str(copy_error)}", "WARNING")
@@ -592,6 +597,10 @@ async def download_pdf_links(
                                 continue
                             # Mark this URL as downloaded with its file path
                             download_pdf_links.downloaded_pdfs[pdf_url] = save_path
+                            saved_files.append(save_path)
+                            # mark datasheet if type matches
+                            if pdf_type and ('data sheet' in pdf_type.lower() or 'datasheet' in pdf_type.lower() or 'specification' in pdf_type.lower()):
+                                has_datasheet = True
 
 
                             # AI-powered PDF cleaning with web interface logging
@@ -608,7 +617,16 @@ async def download_pdf_links(
                     log_message(f"❌ Error downloading {pdf_url}: {str(e)}", "ERROR")
     except Exception as e:
         log_message(f"⚠️ Error during PDF processing for {product_url}: {e}", "ERROR")
-
+        return {"productLink": product_url, "productName": None, "category": cat_name, "saved_count": 0, "has_datasheet": False}
+    
+    # Return summary
+    return {
+        "productLink": product_url,
+        "productName": derived_product_name,
+        "category": cat_name,
+        "saved_count": len(saved_files),
+        "has_datasheet": has_datasheet,
+    }
 def detect_pagination_type(url: str) -> str:
     """
     Detect the pagination type from a URL.

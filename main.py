@@ -136,6 +136,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
 
     try:
         for index, site in enumerate(sites):
+                cat_summaries = []
                 # Check if stop is requested
                 if stop_requested_callback and stop_requested_callback():
                     log_message("Stop requested by user.", "WARNING")
@@ -233,7 +234,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                             log_message(f"📥 Processing product page for PDFs: {venue['productLink']}", "INFO")
                             
                             try:
-                                await download_pdf_links(
+                                summary = await download_pdf_links(
                                     pdf_crawler,  # Use dedicated PDF crawler
                                     product_url=venue["productLink"],
                                     output_folder="output",
@@ -245,6 +246,14 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                     api_key=api_key,
                                     cat_name=site["cat_name"],  # Add category name for folder organization
                                 )
+                                if summary:
+                                    cat_summaries.append({
+                                        "productLink": summary.get("productLink"),
+                                        "productName": summary.get("productName"),
+                                        "category": summary.get("category"),
+                                        "saved_count": summary.get("saved_count", 0),
+                                        "has_datasheet": summary.get("has_datasheet", False),
+                                    })
                                 products_processed_with_pdf_crawler += 1
                                 
                             except Exception as pdf_error:
@@ -283,6 +292,23 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         crawler = AsyncWebCrawler(config=browser_config)
                         await crawler.start()
                         log_message("🚀 Fresh Crawler instance started", "INFO")
+
+        # After finishing each site/category, write per-category CSV
+                try:
+                    if cat_summaries:
+                        os.makedirs("CSVS", exist_ok=True)
+                        from datetime import datetime
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        cat_name_sanitized = sanitize_folder_name(site["cat_name"]) if site.get("cat_name") else "Uncategorized"
+                        out_csv = os.path.join("CSVS", f"downloaded_{cat_name_sanitized}_{ts}.csv")
+                        with open(out_csv, "w", newline="", encoding="utf-8") as f:
+                            writer = csv.DictWriter(f, fieldnames=["productLink","productName","category","saved_count","has_datasheet"])
+                            writer.writeheader()
+                            for row in cat_summaries:
+                                writer.writerow(row)
+                        log_message(f"🧾 Saved category summary: {out_csv}", "SUCCESS")
+                except Exception as e:
+                    log_message(f"⚠️ Failed to write category summary CSV: {e}", "WARNING")
 
     finally:
         # Ensure PDF crawler is properly closed

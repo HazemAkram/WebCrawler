@@ -99,6 +99,7 @@ def require_login():
     if not session.get('authenticated'):
         return redirect(url_for('login'))
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """Minimal inline login form to gate the app when APP_PASSWORD is set."""
@@ -675,6 +676,104 @@ def get_folder_size(folder_path):
         return f"{total_size / (1024**3):.2f} GB"
     except:
         return "Unknown"
+
+# ===================== Products (individual installs) =====================
+
+@app.route('/products', methods=['GET'])
+def products_page():
+    """Inline products page to run product-only downloads from a CSV."""
+    if APP_PASSWORD and not session.get('authenticated'):
+        return redirect(url_for('login'))
+    return render_template('products.html')
+
+@app.route('/upload_products', methods=['POST'])
+def upload_products():
+    """Upload CSV for product-only installation."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        # Count rows
+        import csv
+        total_rows = 0
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                total_rows = sum(1 for _ in reader) - 1  # minus header
+        except Exception as e:
+            return jsonify({'error': f'Error reading CSV: {str(e)}'}), 400
+        return jsonify({'success': True,'filename': filename,'filepath': filepath,'total_urls': max(total_rows,0)})
+    return jsonify({'error': 'Invalid file type. Please upload a CSV file.'}), 400
+
+def run_products_async(csv_filepath, api_key, pdf_size_limit=None, skip_large_files=True):
+    """Run product-only downloader in a separate thread."""
+    global crawling_status
+    try:
+        crawling_status['is_running'] = True
+        crawling_status['stop_requested'] = False
+        crawling_status['start_time'] = datetime.now()
+        crawling_status['logs'] = []
+
+        # Wire logs from scraper_utils into web UI
+        def web_log_callback(message, level):
+            log_message(message, level)
+
+        # Set scraper log callback directly (avoid importing main)
+        try:
+            from utils.scraper_utils import set_log_callback as set_scraper_log_callback, set_pdf_size_limit
+            set_scraper_log_callback(web_log_callback)
+            if pdf_size_limit and skip_large_files:
+                set_pdf_size_limit(pdf_size_limit)
+                log_message(f"PDF size limit set to {pdf_size_limit}MB", "INFO")
+        except Exception as e:
+            log_message(f"⚠️ Failed setting scraper log callback: {e}", "WARNING")
+
+        # Ensure API key available to runner
+        if api_key:
+            os.environ['GROQ_API_KEY'] = api_key
+
+        # Run async job
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from download_pdf_links import run_products
+            loop.run_until_complete(run_products(csv_filepath, output_folder="output"))
+            log_message("Product installation completed!", "SUCCESS")
+        except Exception as e:
+            log_message(f"Error during product installation: {str(e)}", "ERROR")
+        finally:
+            loop.close()
+    finally:
+        crawling_status['is_running'] = False
+        crawling_status['stop_requested'] = False
+
+@app.route('/start_products', methods=['POST'])
+def start_products():
+    """Start the product-only installation job."""
+    global crawling_status
+    if crawling_status['is_running']:
+        return jsonify({'error': 'Another job is running'}), 400
+    data = request.get_json()
+    csv_filepath = data.get('csv_filepath')
+    api_key = data.get('api_key')
+    pdf_size_limit = data.get('pdf_size_limit')
+    skip_large_files = True
+    if not csv_filepath or not os.path.exists(csv_filepath):
+        return jsonify({'error': 'Invalid CSV file path'}), 400
+    if not api_key:
+        return jsonify({'error': 'API key is required'}), 400
+    thread = threading.Thread(
+        target=run_products_async,
+        args=(csv_filepath, api_key, pdf_size_limit, skip_large_files)
+    )
+    thread.daemon = True
+    thread.start()
+    return jsonify({'success': True, 'message': 'Product installation started'})
 
 if __name__ == '__main__':
     # SECURITY: Binding to specific IP address 65.108.122.8

@@ -1,0 +1,49 @@
+body {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    font-family: Segoe UI, Arial, sans-serif
+}
+
+.main-container {
+    background: rgba(255, 255, 255, .95);
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, .1);
+    margin: 2rem auto;
+    max-width: 1000px
+}
+
+.header {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    padding: 2rem;
+    border-radius: 20px 20px 0 0;
+    text-align: center
+}
+
+.card {
+    border: none;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .1);
+    margin-bottom: 1.5rem
+}
+
+.card-header {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    border-radius: 15px 15px 0 0 !important;
+    padding: 1rem 1.25rem;
+    font-weight: 600
+}
+
+.file-upload {
+    border: 3px dashed #d1d5db;
+    border-radius: 15px;
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer
+}
+
+.file-upload:hover {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, .05)
+}

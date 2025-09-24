@@ -1,9 +1,10 @@
 """
-Product-only runner
+DeepSeek AI Web Crawler
+Copyright (c) 2025 Ayaz Mensyoğlu
 
-Reads a CSV containing columns: url, cat_name, pdf_selector, name_selector
-and downloads PDFs for each product using the shared download pipeline.
-Saves a CSV summary under CSVS/ with per-product saved file counts.
+This file is part of the DeepSeek AI Web Crawler project.
+Licensed under the Apache License, Version 2.0.
+See NOTICE file for additional terms and conditions.
 """
 
 import asyncio

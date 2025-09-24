@@ -33,8 +33,8 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # OCR region configuration
-OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 = 25%)
-OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+OCR_BOTTOM_REGION_RATIO = 0.5  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.5   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)

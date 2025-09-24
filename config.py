@@ -43,7 +43,7 @@ DEFAULT_CONFIG = {
         "delay_max": 15
     },
     "pdf_settings": {
-        "max_file_size_mb": 25,  # Maximum PDF file size to download
+        "max_file_size_mb": 60,  # Maximum PDF file size to download
         "skip_large_files": True  # Whether to skip files larger than max_file_size_mb
     }
 }

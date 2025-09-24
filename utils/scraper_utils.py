@@ -586,7 +586,7 @@ async def download_pdf_links(
                             lowered = os.path.basename(save_path).lower()
                             cert_terms = [
                                 'certificate','certification','certifications','iso','tse', 'declaration', 
-                                'coc','iec','ce','emc','ped','fda','rohs','iecex','csa','warranty'
+                                'coc','iec','emc','ped','fda','rohs','iecex','csa','warranty'
                             ]
                             if any(term in lowered for term in cert_terms): 
                                 try: 
@@ -1170,18 +1170,18 @@ async def fetch_and_process_page_with_js(
                 await new Promise(r => setTimeout(r, 9000));
                 
                 // Extract new page data
-                const newPageData = extractRows();
-
-                if(newPageData.length !== lastPageData.length){{
-                    console.log('[JS] No new data found. Stopping pagination.');
-                    break;
-                }}
+                const newPageData = extractRows()
 
                 allRowsData.push({{
                     page: currentPage,
                     data: newPageData
                 }});
                 console.log(`[JS] Extracted page ${{currentPage}} with ${{newPageData.length}} rows`);
+
+                if(newPageData.length !== lastPageData.length){{
+                    console.log('[JS] No new data found. Stopping pagination.');
+                    break;
+                }}
                 
                 // Update button reference after DOM changes
                 nextButton = document.querySelector(buttonSelector);

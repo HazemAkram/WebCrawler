@@ -859,7 +859,7 @@ def analyze_text_with_ai_chunks(text_chunks, groq_client):
         - Postal codes and city info when part of an address line
 
         LABELS AND SEPARATORS:
-        - Include preceding labels and separators when present: "Email", "E-mail", "Mail", "Tel", "Telephone", "Phone", "Mobile", "GSM", "WhatsApp", "Whatsapp", "Fax", "Web", "Website", "Site", "Adres", "Address", "Firma", "Ofis", "Şube", "Telefon", "E-posta".
+        - Include preceding labels and separators when present: "Regiested", "Email", "E-mail", "Mail", "Tel", "Telephone", "Phone", "Mobile", "GSM", "WhatsApp", "Whatsapp", "Fax", "Web", "Website", "Site", "Adres", "Address", "Firma", "Ofis", "Şube", "Telefon", "E-posta".
         - Include adjacent punctuation/separators like ':', '-', '—', '|' and surrounding spaces that belong to the phrase.
 
         CHUNKING RULES:

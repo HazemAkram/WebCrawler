@@ -33,8 +33,8 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # OCR region configuration
-OCR_BOTTOM_REGION_RATIO = 0.5  # Process bottom 25% of the page for OCR (0.25 = 25%)
-OCR_REGION_START_RATIO = 0.5   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
@@ -59,81 +59,6 @@ def get_groq_client(api_key):
     except Exception as e:
         print(f"❌ Error initializing Groq client: {str(e)}")
         return None
-
-def set_ocr_confidence_threshold(threshold: int):
-    """
-    Set the OCR confidence threshold for text element filtering.
-    
-    Args:
-        threshold (int): Confidence threshold (0-100). Higher values mean stricter filtering.
-    """
-    global OCR_CONFIDENCE_THRESHOLD
-    if 0 <= threshold <= 100:
-        OCR_CONFIDENCE_THRESHOLD = threshold
-        print(f"✅ OCR confidence threshold set to {threshold}")
-    else:
-        print(f"❌ Invalid confidence threshold: {threshold}. Must be between 0-100.")
-
-def set_ocr_region_settings(bottom_region_ratio: float = None):
-    """
-    Configure OCR region processing settings.
-    
-    Args:
-        bottom_region_ratio (float): Ratio of the bottom region to process for OCR (0.1-1.0)
-                                   0.25 = bottom 25%, 0.5 = bottom 50%, 1.0 = entire page
-    """
-    global OCR_BOTTOM_REGION_RATIO, OCR_REGION_START_RATIO
-    
-    if bottom_region_ratio is not None:
-        if 0.1 <= bottom_region_ratio <= 1.0:
-            OCR_BOTTOM_REGION_RATIO = bottom_region_ratio
-            OCR_REGION_START_RATIO = 1.0 - bottom_region_ratio
-            print(f"✅ OCR region set to bottom {int(bottom_region_ratio*100)}% of the page")
-        else:
-            print(f"❌ Invalid bottom region ratio: {bottom_region_ratio}. Must be between 0.1-1.0")
-
-def set_footer_removal_settings(height_ratio: float = None, min_height: int = None, 
-                               max_height: int = None, detection_threshold: float = None):
-    """
-    Configure footer removal settings.
-    
-    Args:
-        height_ratio (float): Footer height as ratio of page height (0.05-0.3)
-        min_height (int): Minimum footer height in pixels (10-100)
-        max_height (int): Maximum footer height in pixels (50-500)
-        detection_threshold (float): Threshold for detecting footer content (0.1-0.8)
-    """
-    global FOOTER_HEIGHT_RATIO, FOOTER_MIN_HEIGHT, FOOTER_MAX_HEIGHT, FOOTER_DETECTION_THRESHOLD
-    
-    if height_ratio is not None:
-        if 0.05 <= height_ratio <= 0.3:
-            FOOTER_HEIGHT_RATIO = height_ratio
-            print(f"✅ Footer height ratio set to {height_ratio}")
-        else:
-            print(f"❌ Invalid height ratio: {height_ratio}. Must be between 0.05-0.3")
-    
-    if min_height is not None:
-        if 10 <= min_height <= 100:
-            FOOTER_MIN_HEIGHT = min_height
-            print(f"✅ Footer minimum height set to {min_height}px")
-        else:
-            print(f"❌ Invalid minimum height: {min_height}. Must be between 10-100px")
-    
-    if max_height is not None:
-        if 50 <= max_height <= 500:
-            FOOTER_MAX_HEIGHT = max_height
-            print(f"✅ Footer maximum height set to {max_height}px")
-        else:
-            print(f"❌ Invalid maximum height: {max_height}. Must be between 50-500px")
-    
-    if detection_threshold is not None:
-        if 0.1 <= detection_threshold <= 0.8:
-            FOOTER_DETECTION_THRESHOLD = detection_threshold
-            print(f"✅ Footer detection threshold set to {detection_threshold}")
-        else:
-            print(f"❌ Invalid detection threshold: {detection_threshold}. Must be between 0.1-0.8")
-
-# Old analyze_text_with_ai function removed - replaced with analyze_text_with_ai_chunks for better context handling
 
 def find_tesseract_path():
     """
@@ -268,48 +193,6 @@ def setup_dependencies():
         return tesseract_path, None
     
     return tesseract_path, poppler_path
-
-def test_dependencies():
-    """
-    Test if Tesseract and Poppler are working correctly.
-    Returns True if both dependencies are working, False otherwise.
-    """
-    print("🔍 Testing dependencies...")
-    
-    # Test Tesseract
-    try:
-        tesseract_path, poppler_path = setup_dependencies()
-        if not tesseract_path:
-            print("❌ Tesseract test failed")
-            return False
-        
-        # Test Tesseract functionality
-        test_image = Image.new('RGB', (100, 100), color='white')
-        result = pytesseract.image_to_string(test_image)
-        print("✅ Tesseract test passed")
-        
-    except Exception as e:
-        print(f"❌ Tesseract test failed: {str(e)}")
-        return False
-    
-    # Test Poppler
-    try:
-        if not poppler_path:
-            print("❌ Poppler test failed - not found")
-            return False
-        
-        # Test if pdftoppm exists in the poppler path
-        pdftoppm_path = os.path.join(poppler_path, "pdftoppm")
-        if not os.path.exists(pdftoppm_path):
-            print(f"❌ Poppler test failed - pdftoppm not found at {pdftoppm_path}")
-            return False
-        
-        print("✅ Poppler test passed")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Poppler test failed: {str(e)}")
-        return False
 
 def preprocess_image(img_cv):
     """Enhances image for QR detection using adaptive thresholding"""
@@ -613,70 +496,6 @@ def kmeans(input_img, k, i_val):
     centers = np.sort(centers, axis=0)
 
     return centers[i_val].astype(int), centers, hist
-
-def enhance_image_for_ocr(image, bottom_25_percent_only=True):
-    """
-    Simple image enhancement using K-means for better OCR
-    Returns enhanced image for OCR, original image unchanged
-    
-    Args:
-        image: PIL Image to enhance
-        bottom_25_percent_only: If True, only process the bottom 25% of the image for OCR
-    """
-    # Convert PIL to OpenCV format
-    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    
-    # Convert to grayscale for K-means
-    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-    
-    if bottom_25_percent_only:
-        # Extract only the bottom region of the image for OCR processing
-        height, width = gray.shape
-        bottom_region_start = int(height * OCR_REGION_START_RATIO)  # Start at configured ratio
-        
-        # Create a new image with only the bottom region
-        bottom_region = gray[bottom_region_start:, :]
-        
-        # Apply K-means enhancement only to the bottom region
-        text_value, centers, hist = kmeans(bottom_region, k=4, i_val=1)
-        
-        # Create enhanced image for OCR (only bottom region)
-        enhanced = bottom_region.copy()
-        
-        # Apply simple contrast enhancement to text regions
-        text_mask = bottom_region < text_value + 20  # Slightly above the text cluster value
-        
-        # Apply CLAHE only to text regions
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced_clahe = clahe.apply(bottom_region)
-        
-        # Apply enhanced regions back to the image
-        enhanced[text_mask] = enhanced_clahe[text_mask]
-        
-        print(f"   🎯 OCR processing bottom {int(OCR_BOTTOM_REGION_RATIO*100)}% region: {enhanced.shape[0]}x{enhanced.shape[1]} pixels (original: {height}x{width})")
-        
-        # Convert back to PIL format
-        return Image.fromarray(enhanced)
-    else:
-        # Process the entire image (original behavior)
-        # Apply K-means enhancement
-        text_value, centers, hist = kmeans(gray, k=4, i_val=1)
-        
-        # Create enhanced image for OCR
-        enhanced = gray.copy()
-        
-        # Apply simple contrast enhancement to text regions
-        text_mask = gray < text_value + 20  # Slightly above the text cluster value
-        
-        # Apply CLAHE only to text regions
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced_clahe = clahe.apply(gray)
-        
-        # Apply enhanced regions back to the image
-        enhanced[text_mask] = enhanced_clahe[text_mask]
-        
-        # Convert back to PIL format
-        return Image.fromarray(enhanced)
 
 def enhance_image_region(image, region="bottom"):
     """
@@ -1024,43 +843,44 @@ def analyze_text_with_ai_chunks(text_chunks, groq_client):
 
     
     prompt = f"""
-You are an AI assistant specialized in identifying contact information and data in documents that should be removed.
+        You are an AI assistant specialized in identifying contact information that must be removed from documents.
 
-You are tasked to analyze the following text chunks and identify ALL instances of contact information that should be removed:
+        Your task: Analyze the following text chunks and return ALL contact information to remove. Always include the full phrase that a human would consider the contact detail, not just the raw value.
 
-**CONTACT INFORMATION TO REMOVE:**
-- Website URLs and domain names
-- Physical addresses (full or partial) - remove the address text itself
-- Fax and phone numbers
-- Email addresses
-- Social media handles
-- Contact person names with titles
-- Company contact details
-- Office locations and building information
-- Postal codes and city information
-- Any other identifying contact information
+        CONTACT INFORMATION TO REMOVE (include label + value when present):
+        - Emails (remove: label + separator + address), e.g., "Email: sales@company.org", "E-mail - info@acme.com"
+        - Phone numbers (Tel/Phone/Mobile/GSM/WhatsApp/etc.; remove label + value), e.g., "Tel: +1 555 123 4567", "Mobile - 0505 123 45 67"
+        - Fax numbers (remove label + value), e.g., "Fax: +44 20 1234 5678"
+        - URLs/domains (remove label + value if label exists), e.g., "Website: www.acme.com", "www.acme.com"
+        - Physical addresses (remove full address line(s) including city/region/postal code/building where present)
+        - conturry and cities names (e.g. X-Cel House, Chrysalis Way, Langley Bridge, Eastwood, Nottinghamshire NG16 3RY)
+        - Contact person names with roles/titles when tied to contact lines (e.g., "John Doe, Sales Manager")
+        - Company contact blocks, office locations
+        - Postal codes and city info when part of an address line
 
-**IMPORTANT INSTRUCTIONS:**
-1. Analyze each text chunk for contact information
-2. Provide the EXACT text that should be removed (as it appears in the chunks)
-3. Include surrounding context if needed for accurate removal
-4. Be thorough - don't miss any contact details
-5. Focus on privacy and security concerns
-6. Consider that some information might span multiple chunks
-7. Pay attention to chunk boundaries - don't split meaningful contact information
-8. For multi-word contact info, specify the complete phrase to remove
+        LABELS AND SEPARATORS:
+        - Include preceding labels and separators when present: "Email", "E-mail", "Mail", "Tel", "Telephone", "Phone", "Mobile", "GSM", "WhatsApp", "Whatsapp", "Fax", "Web", "Website", "Site", "Adres", "Address", "Firma", "Ofis", "Şube", "Telefon", "E-posta".
+        - Include adjacent punctuation/separators like ':', '-', '—', '|' and surrounding spaces that belong to the phrase.
 
-**OUTPUT FORMAT:**
-Return a JSON array containing objects with these fields:
-- text_to_remove: The exact text to remove (as it appears in the chunks)
-- reason: Why this text should be removed
-- confidence: Your confidence level (high/medium/low)
-- chunk_reference: Which chunk(s) contain this information (e.g., "Chunk 1", "Chunks 2-3")
+        CHUNKING RULES:
+        - Prefer returning text exactly as it appears in a single chunk (label + value together).
+        - If the contact information spans multiple chunks (e.g., label in one chunk, value in the next), return SEPARATE objects for each chunk’s exact text instead of merging into one string. Use chunk references to show they belong together.
+        - If an address spans multiple lines/chunks, return one object per line/chunk (do not invent text that isn't present).
 
-**TEXT CHUNKS TO ANALYZE:**
-{analysis_text}
+        OUTPUT FORMAT:
+        Return ONLY a JSON array of objects with:
+        - text_to_remove: exact text to remove as it appears (include label + value if in the same chunk; include separators/punctuation)
+        - reason: why it should be removed (email, phone, fax, url, address, contact name, etc.)
+        - confidence: high/medium/low
+        - chunk_reference: "Chunk N" or "Chunks N-M" that contain the text
 
-IMPORTANT: Return ONLY valid JSON array, no markdown formatting or additional text.
+        TEXT CHUNKS TO ANALYZE:
+        {analysis_text}
+
+        IMPORTANT:
+        - Do not return markdown, only a valid JSON array.
+        - Be exhaustive: capture all instances.
+        - Do not return values without their labels if the label is in the same chunk. If label and value are in different chunks, return them as separate objects (one per chunk).
 """
 
     try:

@@ -344,6 +344,11 @@ async def download_pdf_links(
         log_message(f"🔍 Starting PDF extraction for product page", "INFO")
         log_message(f"📍 Using selectors: {pdf_selector}", "INFO")
 
+        js_commands = f"""
+        console.log('[JS] Starting data extraction...');
+        await new Promise(r => setTimeout(r, 3000));
+        return 0;
+    """
 
         product_url = f"{product_url}"
         # Crawl the page with CSS selector targeting PDF links
@@ -358,6 +363,7 @@ async def download_pdf_links(
                 remove_overlay_elements=True,
                 verbose=True,
                 simulate_user=True,
+                js_code=js_commands,
             )
         )
 
@@ -1048,6 +1054,12 @@ async def fetch_and_process_page(
             - bool: A flag indicating if the "No Results Found" message was encountered.
     """
 
+
+    js_commands = f"""
+        console.log('[JS] Starting data extraction...');
+        await new Promise(r => setTimeout(r, 3000));
+        return 0;
+    """
     # Debugging: Print the URL being fetched
     log_message(f"🔄 Crawling page {page_number} from URL: {url}", "INFO")    
     # Fetch page content with the extraction strategy
@@ -1055,6 +1067,7 @@ async def fetch_and_process_page(
         url,
         config=CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,  # Do not use cached data
+            js_code=js_commands,
             extraction_strategy=llm_strategy,  # Strategy for data extraction
             target_elements = css_selector,  # Target specific content on the page
             session_id=session_id,  # Unique session ID for the crawl

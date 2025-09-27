@@ -429,18 +429,9 @@ When reporting issues, please include:
 
 ---
 
-## 📊 Project Statistics
-
-![GitHub stars](https://img.shields.io/github/stars/your-username/deepseek-ai-web-crawler?style=social)
-![GitHub forks](https://img.shields.io/github/forks/your-username/deepseek-ai-web-crawler?style=social)
-![GitHub issues](https://img.shields.io/github/issues/your-username/deepseek-ai-web-crawler)
-![GitHub pull requests](https://img.shields.io/github/issues-pr/your-username/deepseek-ai-web-crawler)
-
----
-
 <div align="center">
 
-**Built with ❤️ by the AI Web Crawler Team**
+**Built with ❤️ **
 
 [⬆ Back to Top](#deepseek-ai-web-crawler--pdf-processor)
 

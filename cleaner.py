@@ -33,8 +33,8 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # OCR region configuration
-OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 = 25%)
-OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+OCR_BOTTOM_REGION_RATIO = 0.20  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.80   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
@@ -502,21 +502,27 @@ def enhance_image_region(image, region="bottom"):
     Enhance a vertical region (top or bottom 25%) of the image for OCR.
     Returns a PIL grayscale image of the selected region.
     """
-    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    # img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    img_cv = np.array(image)
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-    height, width = gray.shape
+    height, width= gray.shape[:2]
     if region == "top":
         region_img = gray[: int(height * OCR_BOTTOM_REGION_RATIO), :]
-    else:
+    elif region == "bottom":
         start = int(height * OCR_REGION_START_RATIO)
         region_img = gray[start:, :]
-    text_value, centers, hist = kmeans(region_img, k=4, i_val=1)
-    enhanced = region_img.copy()
-    text_mask = region_img < text_value + 20
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    enhanced_clahe = clahe.apply(region_img)
-    enhanced[text_mask] = enhanced_clahe[text_mask]
-    return Image.fromarray(enhanced)
+    elif region == "full":
+        region_img = gray
+
+    # upscale + threshold + light morph close 
+    region_img = cv2.resize(region_img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    region_img = cv2.bilateralFilter(region_img, 5, 30, 30)
+    _, region_img = cv2.threshold(region_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    region_img = cv2.morphologyEx(region_img, cv2.MORPH_CLOSE, kernel, iterations=1)
+    return Image.fromarray(region_img)
+   
+    
 
 def replace_text_in_scanned_pdf_ai(images, api_key: str):
     """
@@ -547,12 +553,21 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         # Perform OCR on bottom 25% region
         enhanced_bottom = enhance_image_region(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), region="bottom")
-        data_bottom = pytesseract.image_to_data(enhanced_bottom, output_type=pytesseract.Output.DICT)
+        data_bottom = pytesseract.image_to_data(
+            enhanced_bottom, 
+            output_type=pytesseract.Output.DICT,
+            config="--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
+            )
         bottom_chunks = create_contextual_text_chunks(data_bottom, original_image_height=original_height, bottom_25_percent_only=True)
+
 
         # Perform OCR on top 25% region
         enhanced_top = enhance_image_region(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), region="top")
-        data_top = pytesseract.image_to_data(enhanced_top, output_type=pytesseract.Output.DICT)
+        data_top = pytesseract.image_to_data(
+            enhanced_top, 
+            output_type=pytesseract.Output.DICT,
+            config="--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
+            )
         top_chunks = create_contextual_text_chunks(data_top, original_image_height=original_height, bottom_25_percent_only=False)
 
         # Merge chunks from both regions
@@ -1025,6 +1040,7 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         pdf_images = convert_from_path(
             file_path,
             poppler_path=poppler_path,
+            dpi=300,
         )
     except Exception as e:
         log_message(f"❌ Error converting PDF to images: {str(e)}", "ERROR")

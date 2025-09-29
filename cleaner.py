@@ -33,8 +33,8 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # OCR region configuration
-OCR_BOTTOM_REGION_RATIO = 0.50  # Process bottom 25% of the page for OCR (0.25 = 25%)
-OCR_REGION_START_RATIO = 0.50   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+OCR_BOTTOM_REGION_RATIO = 0.45  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.55   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
@@ -569,6 +569,9 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
             config="--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
             )
         top_chunks = create_contextual_text_chunks(data_top, original_image_height=original_height, bottom_25_percent_only=False)
+
+
+        
 
         # Merge chunks from both regions
         text_chunks = (bottom_chunks or []) + (top_chunks or [])

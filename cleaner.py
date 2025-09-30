@@ -25,6 +25,7 @@ import json
 from models.venue import TextRemove
 import re
 
+
 # Configuration constants
 QR_PADDING = 10              # Padding around QR codes (for QR removal)
 TEXT_PADDING = 1             # Minimal padding around text (for text removal)
@@ -558,7 +559,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
             output_type=pytesseract.Output.DICT,
             config="--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
             )
-        bottom_chunks = create_contextual_text_chunks(data_bottom, original_image_height=original_height, bottom_25_percent_only=True)
+        bottom_chunks = create_contextual_text_chunks(data_bottom, original_image_height=original_height, bottom_25_percent_only=True, scale=2.0)
 
 
         # Perform OCR on top 25% region
@@ -568,7 +569,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
             output_type=pytesseract.Output.DICT,
             config="--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
             )
-        top_chunks = create_contextual_text_chunks(data_top, original_image_height=original_height, bottom_25_percent_only=False)
+        top_chunks = create_contextual_text_chunks(data_top, original_image_height=original_height, bottom_25_percent_only=False, scale=2.0)
 
 
         
@@ -650,18 +651,17 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
     
     return modified_images
 
-def create_contextual_text_chunks(data, original_image_height=None, bottom_25_percent_only=True):
+# New or changed function signature and internals
+def create_contextual_text_chunks(data, original_image_height=None, bottom_25_percent_only=True, scale: float = 1.0):
     """
     Create contextual text chunks from Tesseract output data.
     Groups related text elements into meaningful chunks for better AI analysis.
-    
+
     Args:
         data: Tesseract output data dictionary
         original_image_height: Height of the original image (needed to adjust coordinates for bottom 25% processing)
         bottom_25_percent_only: If True, adjust coordinates for bottom 25% region processing
-        
-    Returns:
-        List of dictionaries containing text chunks with bounding box information
+        scale: upscale factor applied to the OCR image (e.g., 2.0 when fx=fy=2 in enhance_image_region)
     """
     if not data or 'text' not in data:
         return []
@@ -669,72 +669,75 @@ def create_contextual_text_chunks(data, original_image_height=None, bottom_25_pe
     chunks = []
     current_chunk = None
     
-    # Calculate offset for bottom region if needed
+    # Calculate offset for bottom region if needed (in original coordinates)
     y_offset = 0
     if bottom_25_percent_only and original_image_height:
-        y_offset = int(original_image_height * OCR_REGION_START_RATIO)  # Offset to map back to original image coordinates
-    
-    # Process text elements in reading order (top to bottom, left to right)
+        y_offset = int(original_image_height * OCR_REGION_START_RATIO)
+
     text_elements = []
     def _to_int(val, default=0):
         try:
             return int(float(val))
         except Exception:
             return default
+
+    # Map OCR coordinates (in upscaled space) back to original image space
+    sx = float(scale) if scale else 1.0
+    sy = float(scale) if scale else 1.0
+
     for i in range(len(data['text'])):
         if str(data['text'][i]).strip():
-            left = _to_int(data.get('left', [0])[i])
-            top_val = _to_int(data.get('top', [0])[i])
-            width = _to_int(data.get('width', [0])[i])
-            height = _to_int(data.get('height', [0])[i])
+            left_up = _to_int(data.get('left', [0])[i])
+            top_up = _to_int(data.get('top', [0])[i])
+            width_up = _to_int(data.get('width', [0])[i])
+            height_up = _to_int(data.get('height', [0])[i])
             conf = _to_int(data.get('conf', [0])[i], default=-1)
-            adjusted_top = top_val + y_offset if bottom_25_percent_only else top_val
+
+            # Downscale to original image coordinates and add region offset
+            left = int(round(left_up / sx))
+            top = int(round(top_up / sy)) + (y_offset if bottom_25_percent_only else 0)
+            width = int(round(width_up / sx))
+            height = int(round(height_up / sy))
+
             text_elements.append({
                 'text': str(data['text'][i]).strip(),
                 'left': left,
-                'top': adjusted_top,
+                'top': top,
                 'width': width,
                 'height': height,
                 'conf': conf
             })
     
-    # Sort by position (top to bottom, then left to right)
+    # Sort and chunking logic unchanged...
     text_elements.sort(key=lambda x: (x['top'], x['left']))
-    
     for element in text_elements:
-        # Skip low confidence elements
         if element['conf'] < OCR_CONFIDENCE_THRESHOLD:
             continue
-            
+
         if current_chunk is None:
-            # Start new chunk
             current_chunk = {
                 'text': element['text'],
                 'bbox': (element['left'], element['top'], element['width'], element['height']),
                 'elements': [element]
             }
         else:
-            # Check if this element should be part of the current chunk
             should_merge = should_merge_text_elements(current_chunk, element)
-            
             if should_merge:
-                # Merge into current chunk
                 current_chunk['text'] += ' ' + element['text']
-                current_chunk['bbox'] = merge_bounding_boxes(current_chunk['bbox'], 
-                                                          (element['left'], element['top'], element['width'], element['height']))
+                current_chunk['bbox'] = merge_bounding_boxes(
+                    current_chunk['bbox'],
+                    (element['left'], element['top'], element['width'], element['height'])
+                )
                 current_chunk['elements'].append(element)
             else:
-                # Finalize current chunk and start new one
                 if current_chunk['text'].strip():
                     chunks.append(current_chunk)
-                
                 current_chunk = {
                     'text': element['text'],
                     'bbox': (element['left'], element['top'], element['width'], element['height']),
                     'elements': [element]
                 }
-    
-    # Add the last chunk if it exists
+
     if current_chunk and current_chunk['text'].strip():
         chunks.append(current_chunk)
     return chunks
@@ -1043,7 +1046,7 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         pdf_images = convert_from_path(
             file_path,
             poppler_path=poppler_path,
-            dpi=300,
+            dpi=300
         )
     except Exception as e:
         log_message(f"❌ Error converting PDF to images: {str(e)}", "ERROR")
@@ -1088,6 +1091,7 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
             final_images = final_images[:-1] 
         # Save final PDF
         final_path = f"{file_path}"
+        
         final_images[0].save(final_path, format='PDF', save_all=True, 
                              append_images=final_images[1:])
         print(f"✨ Cleaned PDF saved to: {final_path}")

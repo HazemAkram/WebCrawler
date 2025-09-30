@@ -14,7 +14,9 @@ import cv2
 from PIL import Image
 import pytesseract
 from pyzbar.pyzbar import decode
-from pdf2image import convert_from_path
+from pdf2image import convert_from_path, pdfinfo_from_path
+import tempfile
+import img2pdf
 import os
 import platform
 import subprocess
@@ -24,6 +26,7 @@ from typing import List, Dict, Any
 import json
 from models.venue import TextRemove
 import re
+import gc 
 
 
 # Configuration constants
@@ -648,6 +651,9 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         
         # Convert back to PIL format and add to results
         modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
+        del img_cv, enhanced_bottom, data_bottom, bottom_chunks
+        del enhanced_top, data_top, top_chunks
+        gc.collect()
     
     return modified_images
 
@@ -1012,8 +1018,10 @@ def remove_qr_codes_from_pdf(images):
             # Convert back to PIL format
             modified_images.append(Image.fromarray(cv2.cvtColor(img_org, cv2.COLOR_BGR2RGB)))
             count += 1
-    return modified_images
 
+        del img_cv, img_org, processed_img, qr_codes
+        gc.collect()
+    return modified_images
 
 
 def pdf_processing(file_path: str, api_key: str, log_callback=None):
@@ -1042,11 +1050,21 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         log_message("❌ Cannot proceed without Poppler. Please install Poppler.", "ERROR")
         return
     
+    info = pdfinfo_from_path(file_path, poppler_path=poppler_path)
+    page_count = int(info.get("Pages", 1))
+
+    target_dpi = 300 
+    if page_count >= 30: 
+        target_dpi = 200
+    elif page_count >=80: 
+        target_dpi = 150
+
+
     try:
         pdf_images = convert_from_path(
             file_path,
             poppler_path=poppler_path,
-            dpi=300
+            dpi=target_dpi
         )
     except Exception as e:
         log_message(f"❌ Error converting PDF to images: {str(e)}", "ERROR")
@@ -1077,7 +1095,7 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
                 if not is_horizontal:
                     # Resize cover to match first page dimensions for portrait/square PDFs
                     cover = cover.resize((first_page_width, first_page_height), Image.Resampling.LANCZOS)
-                               
+                                
                 final_images.insert(0, cover)
             else:
                 # If no pages to compare, just add cover as is
@@ -1092,8 +1110,18 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         # Save final PDF
         final_path = f"{file_path}"
         
-        final_images[0].save(final_path, format='PDF', save_all=True, 
-                             append_images=final_images[1:])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_files = []
+            for idx, im in enumerate(final_images):
+                tmp_path = os.path.join(tmpdir, f"page_{idx:05d}.jpg")
+                im.save(tmp_path, format="JPEG", quality=85, optimize=True)
+                temp_files.append(tmp_path)
+                # free per-page PIL object ASAP
+                final_images[idx] = None
+            # combine with img2pdf reading from disk (low RAM)
+            with open(final_path, "wb") as f_out:
+                f_out.write(img2pdf.convert(temp_files))
         print(f"✨ Cleaned PDF saved to: {final_path}")
         
     except Exception as e:

@@ -78,6 +78,100 @@ def get_pdf_size_limit() -> int:
     """
     return MAX_SIZE_MB
 
+def generate_product_name_js_commands(primary_selector: str) -> str:
+    """
+    Generate enhanced JavaScript commands for product name extraction.
+    
+    Args:
+        primary_selector (str): The primary CSS selector from CSV configuration
+        
+    Returns:
+        str: JavaScript code for product name extraction
+    """
+    return f"""
+        console.log('[JS] Starting enhanced product name extraction...');
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Primary selector from CSV configuration
+        var primarySelector = '{primary_selector}';
+        
+        // Fallback selectors for common product name patterns
+        var fallbackSelectors = [
+            'h1',
+            '.product-title',
+            '.product-name',
+            '[data-product-name]',
+            '.title',
+            'h2',
+            '.product-header h1',
+            '.product-info h1',
+            '.product-details h1',
+            '[data-name]',
+            '.product-name h1',
+            '.product-title h1',
+            '.main-title',
+            '.page-title',
+            'h1.product-title',
+            'h1.product-name'
+        ];
+        
+        // Combine primary and fallback selectors
+        var allSelectors = [primarySelector, ...fallbackSelectors];
+        
+        var productName = "";
+        var usedSelector = "";
+        var extractionAttempts = [];
+        
+        // Try each selector until we find a valid product name
+        for (var i = 0; i < allSelectors.length; i++) {{
+            try {{
+                var selector = allSelectors[i];
+                console.log('[JS] Trying selector:', selector);
+                
+                var element = document.querySelector(selector);
+                if (element) {{
+                    var text = element.innerText || element.textContent || "";
+                    text = text.trim();
+                    
+                    // Log extraction attempt
+                    extractionAttempts.push({{selector: selector, found: true, text: text}});
+                    
+                    // Validate the extracted text
+                    if (text && text.length > 2 && text.length < 200) {{
+                        // Clean the text
+                        productName = text
+                        if (productName.length > 2) {{
+                            usedSelector = selector;
+                            console.log('[JS] Successfully extracted product name:', productName);
+                            console.log('[JS] Used selector:', selector);
+                            break;
+                        }}
+                    }}
+                }} else {{
+                    extractionAttempts.push({{selector: selector, found: false, text: ""}});
+                }}
+            }} catch (error) {{
+                console.log('[JS] Error with selector', allSelectors[i], ':', error.message);
+                extractionAttempts.push({{selector: allSelectors[i], found: false, error: error.message}});
+                continue;
+            }}
+        }}
+        
+        // Final validation and fallback
+        if (!productName || productName.length < 2) {{
+            console.log('[JS] No valid product name found, using fallback');
+            console.log('[JS] Extraction attempts:', JSON.stringify(extractionAttempts, null, 2));
+            productName = "Unnamed Product";
+            usedSelector = "fallback";
+        }}
+        
+        console.log('[JS] Final product name:', productName);
+        console.log('[JS] Selector used:', usedSelector);
+        console.log('[JS] Total attempts made:', extractionAttempts.length);
+        
+        return productName;
+        """
+
 def log_message(message, level="INFO"):
     """Log a message, either to console or web interface"""
     global log_callback
@@ -107,8 +201,10 @@ def sanitize_folder_name(product_name: str) -> str:
     sanitized = product_name.replace('\\', '/').replace('/', '_') # (if you are working with windows uncomment this)
     
     # Replace other invalid characters
-    invalid_chars = r'[<>:"?*]'
+    invalid_chars = r'[<>:?*]'
     sanitized = re.sub(invalid_chars, '_', sanitized)
+    invalid_chars = r'["]'
+    sanitized = re.sub(invalid_chars, '', sanitized)
     
     # Remove leading/trailing spaces and dots
     sanitized = sanitized.strip(' .')
@@ -344,11 +440,12 @@ async def download_pdf_links(
         log_message(f"🔍 Starting PDF extraction for product page", "INFO")
         log_message(f"📍 Using selectors: {pdf_selector}", "INFO")
 
-        js_commands = f"""
-        console.log('[JS] Starting data extraction...');
-        await new Promise(r => setTimeout(r, 3000));
-        return 0;
-    """
+        log_message(f"Name Selector: {pdf_selector[1]}", "INFO")
+
+
+        # Enhanced JavaScript product name extraction using helper function
+        # The second selector will be used as primary, with comprehensive fallback selectors
+        js_commands = generate_product_name_js_commands(pdf_selector[1])
 
         product_url = f"{product_url}"
         # Crawl the page with CSS selector targeting PDF links
@@ -385,12 +482,30 @@ async def download_pdf_links(
 
         log_message(f"🔗 Found {len(extracted_data)} potential PDF(s) via CSS selector", "INFO")
 
-        # Derive product name from extracted items
-        extracted_names = [item.get('productName', '') for item in extracted_data if item.get('productName')]
-        if extracted_names:
-            derived_product_name = extracted_names[0]
-        else:
+        # Enhanced product name extraction with better error handling
+        try:
+            if (pdf_result.js_execution_result and 
+                'results' in pdf_result.js_execution_result and 
+                len(pdf_result.js_execution_result['results']) > 0):
+                
+                productName = pdf_result.js_execution_result['results'][0]
+                log_message(f"✅ Product Name Extracted: '{productName}'", "INFO")
+                
+                # Validate extracted product name
+                if productName and productName.strip() and productName != "Unnamed Product":
+                    derived_product_name = productName.strip()
+                    log_message(f"📝 Using extracted product name: '{derived_product_name}'", "INFO")
+                else:
+                    derived_product_name = "Unnamed Product"
+                    log_message(f"⚠️ Invalid product name extracted, using fallback: '{derived_product_name}'", "WARNING")
+            else:
+                derived_product_name = "Unnamed Product"
+                log_message(f"❌ No JavaScript execution result found, using fallback: '{derived_product_name}'", "ERROR")
+                
+        except (KeyError, IndexError, TypeError) as e:
             derived_product_name = "Unnamed Product"
+            log_message(f"❌ Error extracting product name from JavaScript result: {str(e)}", "ERROR")
+            log_message(f"📝 Using fallback product name: '{derived_product_name}'", "INFO")
 
         # Step 3: Process each PDF link to download it
         pdf_links = []
@@ -612,7 +727,7 @@ async def download_pdf_links(
                             # AI-powered PDF cleaning with web interface logging
                             log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
                             try:
-                                pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
+                                #pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
                                 log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
                             except Exception as clean_error:
                                 log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")
@@ -1014,12 +1129,16 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             "You are given filtered HTML from a product page, including elements for the product name (via provided selectors)"
             " and anchors for downloadable technical documents.\n"
             "Extract technical PDFs and the product name. For each document, output: url, text, type, language, priority, productName.\n"
-            "- productName: the exact product title text from the product name element(s).\n"
+            "- productName: the exact product title text from the second selector, do not guess or infer the product name.\n"
+            "    - productName must be an English product name.\n"
             "- url: absolute link to the PDF. Convert relative links using the page domain.\n"
             "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual.\n"
             "- language: language code like EN/DE/TR or Unknown.\n"
             "- priority: High for Data Sheet/Technical Drawing/User Manual, Medium for Catalog.\n"
-            "Ignore certificates/compliance-only links. Return a JSON array matching the schema."
+            "Ignore certificates/compliance-only links. Return a JSON array matching the schema. Ensure all entries use the same complete productName value."
+
+
+            
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging

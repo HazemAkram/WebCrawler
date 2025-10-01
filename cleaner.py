@@ -37,8 +37,8 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # OCR region configuration
-OCR_BOTTOM_REGION_RATIO = 0.45  # Process bottom 25% of the page for OCR (0.25 = 25%)
-OCR_REGION_START_RATIO = 0.55   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
@@ -351,7 +351,8 @@ def remove_footer_area(img_cv, page_num, groq_client=None):
     height, width = img_cv.shape[:2]
     
     # Detect optimal footer height
-    footer_height = detect_footer_area(img_cv) 
+    # footer_height = detect_footer_area(img_cv) 
+    footer_height = 200
     
     # Define footer region
     footer_start_y = height - footer_height
@@ -579,6 +580,10 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
 
         # Merge chunks from both regions
         text_chunks = (bottom_chunks or []) + (top_chunks or [])
+        
+        # # testing chunks 
+        # for i, chunk in enumerate(text_chunks):
+        #     print(f"   Page {page_num}: Chunk {i}: {chunk['text']}")
         
         if not text_chunks:
             print(f"   Page {page_num}: No text chunks found")
@@ -875,7 +880,8 @@ def analyze_text_with_ai_chunks(text_chunks, groq_client):
         Your task: Analyze the following text chunks and return ALL contact information to remove. Always include the full phrase that a human would consider the contact detail, not just the raw value.
 
         CONTACT INFORMATION TO REMOVE (include label + value when present):
-        - Emails (remove: label + separator + address), e.g., "Email: sales@company.org", "E-mail - info@acme.com"
+        - Emails (remove: label + separator + address), e.g., "Email: sales@company.org", "E-mail - info@acme.com", "info@sika.net"
+        - Emails (remove: address), e.g., "info@sika.net" [the OCR may fall and read @ as a Q letter or any other letter]
         - Phone numbers (Tel/Phone/Mobile/GSM/WhatsApp/etc.; remove label + value), e.g., "Tel: +1 555 123 4567", "Mobile - 0505 123 45 67"
         - Fax numbers (remove label + value), e.g., "Fax: +44 20 1234 5678"
         - URLs/domains (remove label + value if label exists), e.g., "Website: www.acme.com", "www.acme.com"

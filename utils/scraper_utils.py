@@ -727,7 +727,7 @@ async def download_pdf_links(
                             # AI-powered PDF cleaning with web interface logging
                             log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
                             try:
-                                #pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
+                                pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
                                 log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
                             except Exception as clean_error:
                                 log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")

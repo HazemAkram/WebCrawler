@@ -456,10 +456,10 @@ async def download_pdf_links(
                 extraction_strategy=pdf_llm_strategy,
                 target_elements=pdf_selector,
                 session_id=f"{session_id}_pdf_extraction",
-                scan_full_page=True,
-                remove_overlay_elements=True,
+                # scan_full_page=True,
+                # remove_overlay_elements=True,
                 verbose=True,
-                simulate_user=True,
+                # simulate_user=True,
                 js_code=js_commands,
             )
         )
@@ -1032,15 +1032,12 @@ def get_browser_config() -> BrowserConfig:
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
         headless=True,  # Whether to run in headless mode (no GUI)
-        viewport_height=1080,
-        viewport_width=1920,
         verbose=True,  # Enable verbose logging
         user_agent = user_agent,  # Custom headers to include
         extra_args=[
             "--no-sandbox",
             "--disable-dev_shm-usage",
             "--disable-gpu",
-            "--disable-web-security",
             "--disable-features=VizDisplayCompositor",
             "--max_old_space_size=4096",
         ]

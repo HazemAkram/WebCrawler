@@ -43,7 +43,7 @@ OCR_REGION_START_RATIO = 0.55   # Start OCR processing at 75% height (1 - 0.25 =
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
 FOOTER_MIN_HEIGHT = 20      # Minimum footer height in pixels
-FOOTER_MAX_HEIGHT = 200      # Maximum footer height in pixels
+FOOTER_MAX_HEIGHT = 100      # Maximum footer height in pixels
 FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
 
 # Groq API configuration

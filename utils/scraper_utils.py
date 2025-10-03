@@ -456,10 +456,10 @@ async def download_pdf_links(
                 extraction_strategy=pdf_llm_strategy,
                 target_elements=pdf_selector,
                 session_id=f"{session_id}_pdf_extraction",
-                # scan_full_page=True,
-                # remove_overlay_elements=True,
+                scan_full_page=True,
+                remove_overlay_elements=True,
                 verbose=True,
-                # simulate_user=True,
+                simulate_user=True,
                 js_code=js_commands,
             )
         )

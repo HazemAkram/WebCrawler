@@ -37,8 +37,8 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # OCR region configuration
-OCR_BOTTOM_REGION_RATIO = 0.25  # Process bottom 25% of the page for OCR (0.25 = 25%)
-OCR_REGION_START_RATIO = 0.75   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+OCR_BOTTOM_REGION_RATIO = 0.45  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.55   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
@@ -351,8 +351,8 @@ def remove_footer_area(img_cv, page_num, groq_client=None):
     height, width = img_cv.shape[:2]
     
     # Detect optimal footer height
-    # footer_height = detect_footer_area(img_cv) 
-    footer_height = 200
+    footer_height = detect_footer_area(img_cv) 
+    # footer_height = 200
     
     # Define footer region
     footer_start_y = height - footer_height

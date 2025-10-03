@@ -349,8 +349,8 @@ def download_output():
         try:
             archives_dir = os.path.join(os.getcwd(), 'archives')
             os.makedirs(archives_dir, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            archive_name = f"crawler_output_{timestamp}.tar.gz"
+            timestamp = datetime.now().strftime("%Y%m%d")
+            archive_name = f"{timestamp}.tar.gz"
             archive_path = os.path.join(archives_dir, archive_name)
 
             # Build tar.gz archive without loading into memory

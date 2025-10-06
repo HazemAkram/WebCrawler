@@ -395,6 +395,139 @@ def sanitize_filename(filename: str) -> str:
     return sanitized
 
 
+def infer_extension_from_url_and_headers(url: str, headers: dict = None) -> str:
+    """
+    Infer file extension from URL and HTTP headers.
+    
+    Args:
+        url (str): The file URL
+        headers (dict): Optional HTTP response headers
+        
+    Returns:
+        str: File extension without dot (e.g., 'pdf', 'zip', 'step') or empty string if unknown
+    """
+    # Content-type to extension mapping
+    content_type_map = {
+        'application/pdf': 'pdf',
+        'application/zip': 'zip',
+        'application/x-zip-compressed': 'zip',
+        'application/x-step': 'step',
+        'application/step': 'step',
+        'model/step': 'step',
+        'application/iges': 'iges',
+        'model/iges': 'iges',
+        'application/acad': 'dwg',
+        'application/x-acad': 'dwg',
+        'application/x-autocad': 'dwg',
+        'application/dwg': 'dwg',
+        'application/dxf': 'dxf',
+        'application/x-dxf': 'dxf',
+        'model/stl': 'stl',
+        'application/sla': 'stl',
+        'application/x-navistyle': 'stl',
+    }
+    
+    # First, try to get extension from headers
+    if headers:
+        content_type = headers.get('content-type', '').lower().split(';')[0].strip()
+        if content_type in content_type_map:
+            return content_type_map[content_type]
+    
+    # Fall back to URL extension
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    if '.' in path:
+        ext = path.rsplit('.', 1)[-1]
+        # Validate extension (max 5 chars, alphanumeric)
+        if ext and len(ext) <= 5 and ext.isalnum():
+            return ext
+    
+    return ''
+
+
+def is_pdf_extension(ext: str) -> bool:
+    """
+    Check if the given extension is a PDF.
+    
+    Args:
+        ext (str): File extension (with or without dot)
+        
+    Returns:
+        bool: True if extension is PDF
+    """
+    if not ext:
+        return False
+    ext_clean = ext.lower().lstrip('.')
+    return ext_clean == 'pdf'
+
+
+def generate_generic_filename_from_llm_text(pdf_text: str, pdf_type: str, pdf_language: str, product_name: str, ext: str) -> str:
+    """
+    Generate an appropriate filename for any file type using LLM extracted text.
+    
+    Args:
+        pdf_text (str): The text extracted by LLM from the file link
+        pdf_type (str): The type of file (Data Sheet, CAD, ZIP, etc.)
+        pdf_language (str): The language of the file
+        product_name (str): The name of the product for fallback naming
+        ext (str): File extension (without dot)
+        
+    Returns:
+        str: A sanitized filename with appropriate extension
+    """
+    
+    # Clean and prepare the text for filename
+    if pdf_text and pdf_text.strip():
+        # Use the LLM extracted text as base filename
+        base_filename = pdf_text.strip()
+        
+        # Remove common unwanted prefixes/suffixes
+        unwanted_patterns = [
+            r'^download\s*',
+            r'^pdf\s*',
+            r'^document\s*',
+            r'^file\s*',
+            r'^cad\s*',
+            r'\s*download$',
+            r'\s*pdf$',
+            r'\s*document$',
+            r'^\d+\.\s*',  # Remove leading numbers like "1. "
+            r'^\d+\s*',    # Remove leading numbers
+        ]
+        
+        for pattern in unwanted_patterns:
+            base_filename = re.sub(pattern, '', base_filename, flags=re.IGNORECASE)
+        
+        # Clean up any extra whitespace
+        base_filename = base_filename.strip()
+        
+        # If the text becomes empty after cleaning, fall back to product name
+        if not base_filename:
+            base_filename = sanitize_folder_name(product_name)
+        
+        # Add type and language info for better identification
+        type_suffix = ""
+        if pdf_type and pdf_type.lower() not in ['unknown', '']:
+            type_suffix += f"_{pdf_type.replace(' ', '_')}"
+        
+        if pdf_language and pdf_language.lower() not in ['unknown', 'en', 'english']:
+            type_suffix += f"_{pdf_language.upper()}"
+        
+        # Combine base filename with type info and extension
+        if type_suffix:
+            filename = f"{base_filename}{type_suffix}.{ext}"
+        else:
+            filename = f"{base_filename}.{ext}"
+    else:
+        # Fallback to product name if no text available
+        filename = f"{sanitize_folder_name(product_name)}.{ext}"
+    
+    # Sanitize the filename
+    filename = sanitize_filename(filename)
+    
+    return filename
+
+
 # https://www.ors.com.tr/en/tek-sirali-sabit-bilyali-rulmanlar
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
@@ -432,12 +565,12 @@ async def download_pdf_links(
 
 
 
-    # Global dictionary to track downloaded PDFs with their file paths across all products
-    if not hasattr(download_pdf_links, 'downloaded_pdfs'):
-        download_pdf_links.downloaded_pdfs = {}  # Change from set to dict: {url: file_path}
+    # Global dictionary to track downloaded files with their file paths across all products
+    if not hasattr(download_pdf_links, 'downloaded_files'):
+        download_pdf_links.downloaded_files = {}  # Dict: {url: file_path} for all file types
 
     try:
-        log_message(f"🔍 Starting PDF extraction for product page", "INFO")
+        log_message(f"🔍 Starting file extraction for product page", "INFO")
         log_message(f"📍 Using selectors: {pdf_selector}", "INFO")
 
         log_message(f"Name Selector: {pdf_selector[1]}", "INFO")
@@ -447,7 +580,7 @@ async def download_pdf_links(
         # The second selector will be used as primary, with comprehensive fallback selectors
         js_commands = generate_product_name_js_commands(pdf_selector[1])
 
-        product_url = f"{product_url}"
+        product_url = f"{product_url}#documents"
         # Crawl the page with CSS selector targeting PDF links
         pdf_result = await crawler.arun(
             url=product_url,
@@ -459,28 +592,34 @@ async def download_pdf_links(
                 scan_full_page=True,
                 remove_overlay_elements=True,
                 verbose=True,
-                simulate_user=True,
+                # simulate_user=True,
                 js_code=js_commands,
             )
         )
 
         if not pdf_result.success or not pdf_result.extracted_content:
-            log_message(f"❌ Failed to extract PDF content from product page", "ERROR")
+            log_message(f"❌ Failed to extract file content from product page", "ERROR")
             log_message(f"🔗 Product URL: {product_url}", "INFO")
             return
 
         # Step 2: Parse extracted content
         try:
             extracted_data = json.loads(pdf_result.extracted_content)
+
+            # with open("cleaned_html.html", "w", encoding="utf-8") as f:
+            #     f.write(pdf_result.cleaned_html)
+            # with open("fit_html.html", "w", encoding="utf-8") as f:
+            #     f.write(pdf_result.fit_html)
+
         except json.JSONDecodeError as e:
             log_message(f"❌ Failed to parse extracted JSON content: {e}", "ERROR")
             return
 
         if not extracted_data:
-            log_message(f"📭 No PDFs found on product page", "INFO")
+            log_message(f"📭 No files found on product page", "INFO")
             return
 
-        log_message(f"🔗 Found {len(extracted_data)} potential PDF(s) via CSS selector", "INFO")
+        log_message(f"🔗 Found {len(extracted_data)} potential file(s) via CSS selector", "INFO")
 
         # Enhanced product name extraction with better error handling
         try:
@@ -507,48 +646,50 @@ async def download_pdf_links(
             log_message(f"❌ Error extracting product name from JavaScript result: {str(e)}", "ERROR")
             log_message(f"📝 Using fallback product name: '{derived_product_name}'", "INFO")
 
-        # Step 3: Process each PDF link to download it
-        pdf_links = []
-        seen_pdf_urls_in_page = set()
+        # Step 3: Split extracted files into PDFs and other file types
+        pdf_docs = []
+        other_docs = []
+        seen_urls_in_page = set()
 
         for item in extracted_data:
-            # Stop if we already have 3 PDFs
-            if len(pdf_links) >= 3:
-                log_message(f"📊 Reached maximum limit of 3 PDFs, stopping validation", "INFO")
-                break
+            file_url = item.get('url', '')
             
-            pdf_url = item.get('url', '')
-            
-            
-            if not pdf_url:
+            if not file_url:
                 log_message(f"⚠️ Skipping item with missing URL: {item}", "WARNING")
                 continue
             
-            
-            # Convert relative URLs to absolute
-            if not (pdf_url.startswith("https://") or pdf_url.startswith("http://") or pdf_url.startswith("www")):
-                if domain_name:
-                    pdf_url = f"https://{domain_name}{pdf_url}"
-                    item['url'] = pdf_url  # Update the item with the corrected URL
-                else:
-                    log_message(f"⚠️ Skipping relative URL without domain: {pdf_url}", "WARNING")
-                    continue
-            
             # Check for duplicates within this page
-            if pdf_url not in seen_pdf_urls_in_page:
-                pdf_links.append(item)
-                seen_pdf_urls_in_page.add(pdf_url)
-                log_message(f"✅ Validated PDF ({len(pdf_links)}/3): {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
-            else: 
-                log_message(f"⏭️ Skipping duplicate PDF URL: {pdf_url}", "INFO")
+            if file_url in seen_urls_in_page:
+                log_message(f"⏭️ Skipping duplicate URL: {file_url}", "INFO")
+                continue
+            
+            seen_urls_in_page.add(file_url)
+            
+            # Infer extension from URL (we'll refine with headers during download)
+            ext = infer_extension_from_url_and_headers(file_url)
+            
+            # Classify as PDF or other
+            if is_pdf_extension(ext):
+                # Only add PDFs if we haven't reached the limit
+                if len(pdf_docs) < 3:
+                    pdf_docs.append(item)
+                    log_message(f"✅ Validated PDF ({len(pdf_docs)}/3): {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
+                else:
+                    log_message(f"📊 Skipped PDF (limit reached): {item.get('type', 'Unknown')}", "INFO")
+            else:
+                # Add all other file types without limit
+                other_docs.append(item)
+                file_type = item.get('type', 'Unknown')
+                log_message(f"✅ Validated {ext.upper() if ext else 'file'}: {file_type} - {item.get('text', 'Unknown')}", "INFO")
 
-        # Check if any PDFs were found
-        if not pdf_links:
-            log_message(f"📭 No PDFs found on page for product: {derived_product_name}", "INFO")
+        # Check if any files were found
+        total_files = len(pdf_docs) + len(other_docs)
+        if total_files == 0:
+            log_message(f"📭 No files found on page for product: {derived_product_name}", "INFO")
             log_message(f"🔗 Product URL: {product_url}", "INFO")
             return {"productLink": product_url, "productName": derived_product_name, "category": cat_name, "saved_count": 0, "has_datasheet": False}
 
-        log_message(f"📄 Found {len(pdf_links)} PDF(s) for product: {derived_product_name}", "INFO")
+        log_message(f"📄 Found {len(pdf_docs)} PDF(s) and {len(other_docs)} other file(s) for product: {derived_product_name}", "INFO")
 
         # Create the download folder if it doesn't exist
         os.makedirs(output_folder, exist_ok=True)
@@ -565,179 +706,193 @@ async def download_pdf_links(
 
 
         # Enhanced sorting: Priority first, then by document type preference, then by language
-        def sort_key(pdf):
-            priority_score = {'High': 3, 'Medium': 2, 'Low': 1}.get(pdf.get('priority', 'Unknown'), 0)
+        def sort_key(doc):
+            priority_score = {'High': 3, 'Medium': 2, 'Low': 1}.get(doc.get('priority', 'Unknown'), 0)
             
-            # Type preference: Data Sheet > Technical Drawing > Manual
+            # Type preference: Data Sheet > Technical Drawing > Manual > CAD > Others
             type_score = 0
-            pdf_type = pdf.get('type', '').lower()
-            if 'data sheet' in pdf_type or 'datasheet' in pdf_type or 'specification' in pdf_type:
+            doc_type = doc.get('type', '').lower()
+            if 'data sheet' in doc_type or 'datasheet' in doc_type or 'specification' in doc_type:
+                type_score = 4
+            elif 'drawing' in doc_type or 'dimensional' in doc_type:
                 type_score = 3
-            elif 'drawing' in pdf_type or 'dimensional' in pdf_type:
+            elif 'manual' in doc_type or 'guide' in doc_type:
                 type_score = 2
-            elif 'manual' in pdf_type or 'guide' in pdf_type:
+            elif 'cad' in doc_type or 'step' in doc_type or 'iges' in doc_type or 'dwg' in doc_type:
                 type_score = 1
             
             # Language preference: English > German > Turkish > Others
             language_score = 0
-            pdf_language = pdf.get('language', '').lower()
-            if 'english' in pdf_language:
+            doc_language = doc.get('language', '').lower()
+            if 'english' in doc_language:
                 language_score = 4
-            elif 'german' in pdf_language or 'deutsch' in pdf_language:
+            elif 'german' in doc_language or 'deutsch' in doc_language:
                 language_score = 3
-            elif 'turkish' in pdf_language or 'türkçe' in pdf_language:
+            elif 'turkish' in doc_language or 'türkçe' in doc_language:
                 language_score = 2
             else:
                 language_score = 1
             
             return (priority_score, type_score, language_score)
 
-        pdf_links.sort(key=sort_key, reverse=True)
+        # Sort PDFs by priority
+        pdf_docs.sort(key=sort_key, reverse=True)
+        
+        # Sort other docs by priority (CAD files first)
+        other_docs.sort(key=sort_key, reverse=True)
+        
+        # Combine for download processing
+        all_files = pdf_docs + other_docs
 
-        log_message(f"📊 Processing {len(pdf_links)} validated technical documents (max 3) by priority", "INFO")
+        log_message(f"📊 Processing {len(all_files)} files ({len(pdf_docs)} PDFs, {len(other_docs)} others) by priority", "INFO")
 
         # Log selected document summary
-        if pdf_links:
+        if all_files:
             log_message("📋 Selected documents:", "INFO")
-            for i, pdf in enumerate(pdf_links, 1):
-                log_message(f"   {i}. {pdf.get('type', 'Unknown')} ({pdf.get('language', 'Unknown')}) - Priority: {pdf.get('priority', 'Unknown')}", "INFO")
+            for i, doc in enumerate(all_files, 1):
+                log_message(f"   {i}. {doc.get('type', 'Unknown')} ({doc.get('language', 'Unknown')}) - Priority: {doc.get('priority', 'Unknown')}", "INFO")
 
-        # Download each PDF with duplicate checking (SSL verification disabled)
-        log_message(f"📥 Starting download of {len(pdf_links)} PDF documents", "INFO")
+        # Download all files with duplicate checking (SSL verification disabled)
+        log_message(f"📥 Starting download of {len(all_files)} file(s)", "INFO")
         saved_files = []
         has_datasheet = False
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-            for i, pdf_info in enumerate(pdf_links, 1):
-                pdf_url = pdf_info['url']
-                pdf_text = pdf_info['text']
-                pdf_type = pdf_info['type']
-                pdf_language = pdf_info.get('language', 'Unknown')
-                pdf_priority = pdf_info.get('priority', 'Unknown')
-                priority_emoji = "🔴" if pdf_priority == 'High' else "🟡" if pdf_priority == 'Medium' else "🟢"
-                log_message(f"{priority_emoji} Downloading PDF {i}/{len(pdf_links)}", "INFO")
-                # Generate filename using LLM extracted text
-                filename = generate_pdf_filename_from_llm_text(pdf_text, pdf_type, pdf_language, derived_product_name)
-                filename = filename.replace('\\', '_').replace('/', '_')
-                save_path = os.path.join(productPath, filename)
+            for i, file_info in enumerate(all_files, 1):
+                file_url = file_info['url']
+                file_text = file_info['text']
+                file_type = file_info['type']
+                file_language = file_info.get('language', 'Unknown')
+                file_priority = file_info.get('priority', 'Unknown')
+                priority_emoji = "🔴" if file_priority == 'High' else "🟡" if file_priority == 'Medium' else "🟢"
                 
-                # Check if this exact PDF URL has been downloaded before (global tracking)
-                if pdf_url in download_pdf_links.downloaded_pdfs:
-                    previous_path = download_pdf_links.downloaded_pdfs[pdf_url]
+                # Infer extension from URL initially
+                file_ext = infer_extension_from_url_and_headers(file_url)
+                is_pdf = is_pdf_extension(file_ext)
+                
+                file_type_label = "PDF" if is_pdf else file_ext.upper() if file_ext else "file"
+                log_message(f"{priority_emoji} Downloading {file_type_label} {i}/{len(all_files)}", "INFO")
+                
+                # Check if this exact file URL has been downloaded before (global tracking)
+                if file_url in download_pdf_links.downloaded_files:
+                    previous_path = download_pdf_links.downloaded_files[file_url]
                     if os.path.exists(previous_path):
                         try:
-                            # Copy the previously cleaned PDF to current product folder with new filename
+                            # Generate filename using generic helper
+                            filename = generate_generic_filename_from_llm_text(file_text, file_type, file_language, derived_product_name, file_ext or 'bin')
+                            filename = filename.replace('\\', '_').replace('/', '_')
+                            save_path = os.path.join(productPath, filename)
+                            
+                            # Copy the previously processed file to current product folder with new filename
                             shutil.copy2(previous_path, save_path)
-                            log_message(f"📋 Copied cleaned PDF from previous download: {filename}", "INFO")
+                            log_message(f"📋 Copied previously downloaded {file_type_label}: {filename}", "INFO")
                             saved_files.append(save_path)
                             # mark datasheet if type matches
-                            if pdf_type and ('data sheet' in pdf_type.lower() or 'datasheet' in pdf_type.lower() or 'specification' in pdf_type.lower()):
+                            if file_type and ('data sheet' in file_type.lower() or 'datasheet' in file_type.lower() or 'specification' in file_type.lower()):
                                 has_datasheet = True
                             continue
                         except Exception as copy_error:
-                            log_message(f"⚠️ Failed to copy cleaned PDF: {str(copy_error)}", "WARNING")
-                            log_message(f"   Will re-download and process: {filename}", "INFO")
+                            log_message(f"⚠️ Failed to copy file: {str(copy_error)}", "WARNING")
+                            log_message(f"   Will re-download and process: {file_url}", "INFO")
                     else:
-                        log_message(f"⚠️ Previously downloaded PDF not found at: {previous_path}", "WARNING")
-                        log_message(f"   Will re-download and process: {filename}", "INFO")
-                
-                # # Check if file already exists in the product folder
-                # if os.path.exists(save_path):
-                #     print(f"⏭️ File already exists: {save_path}")
-                #     download_pdf_links.downloaded_pdfs.add(pdf_url)
-                #     continue
+                        log_message(f"⚠️ Previously downloaded file not found at: {previous_path}", "WARNING")
+                        log_message(f"   Will re-download and process: {file_url}", "INFO")
                 
                 try:
-                    async with session.get(pdf_url) as resp:
+                    async with session.get(file_url) as resp:
                         if resp.status == 200:
+                            # Refine extension from response headers
+                            refined_ext = infer_extension_from_url_and_headers(file_url, resp.headers)
+                            if refined_ext:
+                                file_ext = refined_ext
+                                is_pdf = is_pdf_extension(file_ext)
+                            
                             # Check file size before downloading
                             content_length = resp.headers.get('content-length')
                             if content_length:
                                 file_size_mb = int(content_length) / (1024 * 1024)
                                 if file_size_mb > MAX_SIZE_MB:
-                                    log_message(f"⚠️ Skipping PDF larger than {MAX_SIZE_MB}MB: {pdf_url} (Size: {file_size_mb:.2f}MB)", "INFO")
+                                    log_message(f"⚠️ Skipping file larger than {MAX_SIZE_MB}MB: {file_url} (Size: {file_size_mb:.2f}MB)", "INFO")
                                     continue
                             
-                            # Validate content type for PDF files
-                            content_type = resp.headers.get('content-type', '').lower()
-                            is_pdf_content = (
-                                'application/pdf' in content_type or
-                                'pdf' in content_type or
-                                content_type.startswith('application/octet-stream') or
-                                content_type.startswith('binary/')
-                            )
-                            
-                            # Read the content to check for duplicates
+                            # Read the content
                             content = await resp.read()
                             
                             # Check file size after reading content (fallback for servers that don't provide content-length)
                             content_size_mb = len(content) / (1024 * 1024)
                             if content_size_mb > MAX_SIZE_MB:
-                                log_message(f"⚠️ Skipping PDF larger than {MAX_SIZE_MB}MB: {pdf_url} (Size: {content_size_mb:.2f}MB)", "INFO")
+                                log_message(f"⚠️ Skipping file larger than {MAX_SIZE_MB}MB: {file_url} (Size: {content_size_mb:.2f}MB)", "INFO")
                                 continue
                             
-                            # Additional validation: check if content starts with PDF magic bytes
-                            if not is_pdf_content and len(content) >= 4:
+                            # Validate content for PDFs: check if content starts with PDF magic bytes
+                            if is_pdf and len(content) >= 4:
                                 pdf_magic_bytes = b'%PDF'
                                 if not content.startswith(pdf_magic_bytes):
-                                    log_message(f"⚠️ Skipping non-PDF content from {pdf_url} (Content-Type: {content_type})", "INFO")
+                                    log_message(f"⚠️ Skipping non-PDF content from {file_url}", "INFO")
                                     continue
                             
-                            # Check if content is identical to any existing PDF
+                            # Check if content is identical to any existing file
                             content_hash = hashlib.md5(content).hexdigest()
-                            # if hasattr(download_pdf_links, 'content_hashes') and content_hash in download_pdf_links.content_hashes:
-                            #     print(f"⏭️ Skipping duplicate content: {filename}")
-                            #     download_pdf_links.downloaded_pdfs.add(pdf_url)
-                            #     continue
                             
-                            # Store content hash and download the file
+                            # Store content hash for deduplication
                             if not hasattr(download_pdf_links, 'content_hashes'):
                                 download_pdf_links.content_hashes = set()
                             download_pdf_links.content_hashes.add(content_hash)
                             
-                            # Ensure filename has .pdf extension if it doesn't already
-                            if not filename.lower().endswith('.pdf'):
-                                filename += '.pdf'
-                                save_path = os.path.join(productPath, filename)
+                            # Generate filename using generic helper with proper extension
+                            filename = generate_generic_filename_from_llm_text(file_text, file_type, file_language, derived_product_name, file_ext or 'bin')
+                            filename = filename.replace('\\', '_').replace('/', '_')
                             
+                            # Ensure filename has proper extension
+                            if not filename.lower().endswith(f'.{file_ext}'):
+                                filename = f"{filename.rsplit('.', 1)[0]}.{file_ext}" if '.' in filename else f"{filename}.{file_ext}"
+                            
+                            save_path = os.path.join(productPath, filename)
+                            
+                            # Save the file
                             async with aiofiles.open(save_path, "wb") as f:
                                 await f.write(content)
 
 
-                            # post-download certifictaions filter 
-                            lowered = os.path.basename(save_path).lower()
-                            cert_terms = [
-                                'certificate','certification','certifications','iso','tse', 'declaration', 
-                                'coc','iec','emc','ped','fda','rohs','iecex','csa','warranty'
-                            ]
-                            if any(term in lowered for term in cert_terms): 
-                                try: 
-                                    os.remove(save_path)
-                                    log_message(f"⏭️ Removed certificate PDF: {os.path.basename(save_path)}", "INFO")
-                                except Exception as e:
-                                    log_message(f"⚠️ Failed to remove certificate PDF: {os.path.basename(save_path)}: {str(e)}", "WARNING")
-                                continue
+                            # Post-download certificate filter (only for PDFs)
+                            if is_pdf:
+                                lowered = os.path.basename(save_path).lower()
+                                cert_terms = [
+                                    'certificate','certification','certifications','iso','tse', 'declaration', 
+                                    'coc','iec','emc','ped','fda','rohs','iecex','csa','warranty'
+                                ]
+                                if any(term in lowered for term in cert_terms): 
+                                    try: 
+                                        os.remove(save_path)
+                                        log_message(f"⏭️ Removed certificate PDF: {os.path.basename(save_path)}", "INFO")
+                                    except Exception as e:
+                                        log_message(f"⚠️ Failed to remove certificate PDF: {os.path.basename(save_path)}: {str(e)}", "WARNING")
+                                    continue
+                            
                             # Mark this URL as downloaded with its file path
-                            download_pdf_links.downloaded_pdfs[pdf_url] = save_path
+                            download_pdf_links.downloaded_files[file_url] = save_path
                             saved_files.append(save_path)
-                            # mark datasheet if type matches
-                            if pdf_type and ('data sheet' in pdf_type.lower() or 'datasheet' in pdf_type.lower() or 'specification' in pdf_type.lower()):
+                            
+                            # Mark datasheet if type matches
+                            if file_type and ('data sheet' in file_type.lower() or 'datasheet' in file_type.lower() or 'specification' in file_type.lower()):
                                 has_datasheet = True
 
-
-                            # AI-powered PDF cleaning with web interface logging
-                            log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
-                            try:
-                                pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
-                                log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
-                            except Exception as clean_error:
-                                log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")
-                                log_message(f"📄 Original PDF preserved: {os.path.basename(save_path)}", "INFO")
+                            # AI-powered PDF cleaning (only for PDFs)
+                            if is_pdf:
+                                log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
+                                try:
+                                    pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
+                                    log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
+                                except Exception as clean_error:
+                                    log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")
+                                    log_message(f"📄 Original PDF preserved: {os.path.basename(save_path)}", "INFO")
+                            else:
+                                log_message(f"✅ Saved {file_type_label}: {os.path.basename(save_path)}", "INFO")
                         else:
-                            log_message(f"❌ Failed to download: {pdf_url} (Status: {resp.status})", "ERROR")
+                            log_message(f"❌ Failed to download: {file_url} (Status: {resp.status})", "ERROR")
                 except Exception as e:
-                    log_message(f"❌ Error downloading {pdf_url}: {str(e)}", "ERROR")
+                    log_message(f"❌ Error downloading {file_url}: {str(e)}", "ERROR")
     except Exception as e:
-        log_message(f"⚠️ Error during PDF processing for {product_url}: {e}", "ERROR")
+        log_message(f"⚠️ Error during file processing for {product_url}: {e}", "ERROR")
         return {"productLink": product_url, "productName": None, "category": cat_name, "saved_count": 0, "has_datasheet": False}
     
     # Return summary
@@ -1124,18 +1279,17 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
             "You are given filtered HTML from a product page, including elements for the product name (via provided selectors)"
-            " and anchors for downloadable technical documents.\n"
-            "Extract technical PDFs and the product name. For each document, output: url, text, type, language, priority, productName.\n"
+            " and anchors for downloadable technical documents and CAD files.\n"
+            "Extract technical PDFs, CAD files (STEP, IGES, DWG, DXF, STL), ZIP archives, and other downloadable assets. For each document, output: url, text, type, language, priority, productName.\n"
             "- productName: the exact product title text from the second selector, do not guess or infer the product name.\n"
             "    - productName must be an English product name.\n"
-            "- url: absolute link to the PDF. Convert relative links using the page domain.\n"
-            "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual.\n"
+            "- url: absolute link to the file. Convert relative links using the page domain.\n"
+            "    - Do not add any escape characters to the url.\n"
+            "- text: the link text or button text describing the file.\n"
+            "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual, CAD, ZIP, STEP, IGES, DWG, DXF, STL, or Generic.\n"
             "- language: language code like EN/DE/TR or Unknown.\n"
-            "- priority: High for Data Sheet/Technical Drawing/User Manual, Medium for Catalog.\n"
+            "- priority: High for Data Sheet/Technical Drawing/User Manual/CAD, Medium for Catalog/ZIP.\n"
             "Ignore certificates/compliance-only links. Return a JSON array matching the schema. Ensure all entries use the same complete productName value."
-
-
-            
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging
@@ -1401,3 +1555,4 @@ async def fetch_and_process_page_with_js(
         log_message(f"Error during JS-based crawling: {str(e)}", "INFO")
         traceback.print_exc()
         return [], True
+

@@ -37,13 +37,13 @@ RESCALE_FACTOR = 2           # QR enhancement scale factor
 OCR_CONFIDENCE_THRESHOLD = 0  # Minimum confidence for OCR text elements (0-100)
 
 # OCR region configuration
-OCR_BOTTOM_REGION_RATIO = 0.45  # Process bottom 25% of the page for OCR (0.25 = 25%)
-OCR_REGION_START_RATIO = 0.55   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
+OCR_BOTTOM_REGION_RATIO = 0.20  # Process bottom 25% of the page for OCR (0.25 = 25%)
+OCR_REGION_START_RATIO = 0.60   # Start OCR processing at 75% height (1 - 0.25 = 0.75)
 
 # Footer removal configuration
 FOOTER_HEIGHT_RATIO = 0.2  # Footer height as ratio of page height (15% of page)
 FOOTER_MIN_HEIGHT = 20      # Minimum footer height in pixels
-FOOTER_MAX_HEIGHT = 100      # Maximum footer height in pixels
+FOOTER_MAX_HEIGHT = 200      # Maximum footer height in pixels
 FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
 
 # Groq API configuration
@@ -502,29 +502,37 @@ def kmeans(input_img, k, i_val):
 
     return centers[i_val].astype(int), centers, hist
 
-def enhance_image_region(image, region="bottom"):
+def enhance_image_region(img_cv, start_ratio: float, end_ratio: float):
     """
-    Enhance a vertical region (top or bottom 25%) of the image for OCR.
-    Returns a PIL grayscale image of the selected region.
+    Extract a vertical band [start_ratio, end_ratio) of the image and enhance for OCR.
+    Applies grayscale → light bilateral filter → CLAHE.
+    Returns a PIL grayscale image suitable for Tesseract.
+    
+    Args:
+        img_cv: OpenCV image in BGR format (numpy array)
+        start_ratio: Start position as ratio of image height (0.0 to 1.0)
+        end_ratio: End position as ratio of image height (0.0 to 1.0)
+        
+    Returns:
+        PIL Image: Enhanced grayscale subregion
     """
-    # img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    img_cv = np.array(image)
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-    height, width= gray.shape[:2]
-    if region == "top":
-        region_img = gray[: int(height * OCR_BOTTOM_REGION_RATIO), :]
-    elif region == "bottom":
-        start = int(height * OCR_REGION_START_RATIO)
-        region_img = gray[start:, :]
-    elif region == "full":
-        region_img = gray
-
-    # upscale + threshold + light morph close 
-    region_img = cv2.resize(region_img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    # gray = img_cv
+    height = gray.shape[0]
+    
+    # Extract vertical band
+    start_y = int(height * start_ratio)
+    end_y = int(height * end_ratio)
+    region_img = gray[start_y:end_y, :]
+    
+    # Apply light bilateral filter
     region_img = cv2.bilateralFilter(region_img, 5, 30, 30)
-    _, region_img = cv2.threshold(region_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    region_img = cv2.morphologyEx(region_img, cv2.MORPH_CLOSE, kernel, iterations=1)
+    
+    # Apply CLAHE for contrast enhancement
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    region_img = clahe.apply(region_img)
+    
     return Image.fromarray(region_img)
    
     
@@ -553,58 +561,72 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         print(f"🤖 Processing page {page_num}...")
         
         # Convert to OpenCV format for processing
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        # img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        img_cv = np.array(img)
         original_height = img_cv.shape[0]  # Store original image height for coordinate adjustment
         
-        # Perform OCR on bottom 25% region
-        enhanced_bottom = enhance_image_region(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), region="bottom")
-        data_bottom = pytesseract.image_to_data(
-            enhanced_bottom, 
-            output_type=pytesseract.Output.DICT,
-            config="--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
-            )
-        bottom_chunks = create_contextual_text_chunks(data_bottom, original_image_height=original_height, bottom_25_percent_only=True, scale=2.0)
-
-
-        # Perform OCR on top 25% region
-        enhanced_top = enhance_image_region(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)), region="top")
-        data_top = pytesseract.image_to_data(
-            enhanced_top, 
-            output_type=pytesseract.Output.DICT,
-            config="--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
-            )
-        top_chunks = create_contextual_text_chunks(data_top, original_image_height=original_height, bottom_25_percent_only=False, scale=2.0)
-
-
+        # OCR configuration
+        ocr_config = "--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
         
-
-        # Merge chunks from both regions
-        text_chunks = (bottom_chunks or []) + (top_chunks or [])
+        # Process page in 4 equal-height bands: [0-25%], [25-50%], [50-75%], [75-100%]
+        bands = [(0.0, 0.30), (0.30, 0.60), (0.60, 0.90), (0.90, 1.0)]
+        text_chunks = []
+        
+        for band_idx, (start_ratio, end_ratio) in enumerate(bands, 1):
+            # Extract and enhance band
+            enhanced_band = enhance_image_region(img_cv, start_ratio, end_ratio)
+            
+            enhanced_band.save(f"enhanced_band_{band_idx}.png")
+            # Perform OCR on band
+            data_band = pytesseract.image_to_data(
+                enhanced_band,
+                output_type=pytesseract.Output.DICT,
+                config=ocr_config
+            )
+            
+            # Create contextual chunks with proper offset (no scaling, direct coordinates)
+            region_offset = int(start_ratio * original_height)
+            band_chunks = create_contextual_text_chunks(
+                data_band,
+                original_image_height=original_height,
+                bottom_25_percent_only=False,
+                scale=1.0,
+                region_offset_top=region_offset
+            )
+            
+            if band_chunks:
+                text_chunks.extend(band_chunks)
+                print(f"   Band {band_idx} [{int(start_ratio*100)}-{int(end_ratio*100)}%]: Found {len(band_chunks)} chunks")
+            
+            # Clean up band resources
+            del enhanced_band, data_band, band_chunks
+        
+        gc.collect()
         
         # # testing chunks 
         # for i, chunk in enumerate(text_chunks):
         #     print(f"   Page {page_num}: Chunk {i}: {chunk['text']}")
         
-        if not text_chunks:
-            print(f"   Page {page_num}: No text chunks found")
-            # Still process footer area even if no OCR text was found
-            img_cv = remove_footer_area(img_cv, page_num, groq_client)
-            # Convert back to PIL format and add to results
-            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
-            continue
+        # if not text_chunks:
+        #     print(f"   Page {page_num}: No text chunks found")
+        #     # Still process footer area even if no OCR text was found
+        #     img_cv = remove_footer_area(img_cv, page_num, groq_client)
+        #     # Convert back to PIL format and add to results
+        #     modified_images.append(Image.fromarray(img_cv))
+        #     continue
         
-        print(f"   Page {page_num}: Created {len(text_chunks)} contextual text chunks (bottom: {len(bottom_chunks)}, top: {len(top_chunks)})")
+        print(f"   Page {page_num}: Created {len(text_chunks)} total contextual text chunks from 4 bands")
         
         # Use AI to analyze the text chunks and identify what should be removed
         ai_analysis = analyze_text_with_ai_chunks(text_chunks, groq_client)
         
-        if not ai_analysis:
-            print(f"   Page {page_num}: AI returned no results")
-            # Still process footer area even if AI found nothing
-            img_cv = remove_footer_area(img_cv, page_num, groq_client)
-            # Convert back to PIL format and add to results
-            modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
-            continue
+        # if not ai_analysis:
+        #     print(f"   Page {page_num}: AI returned no results")
+        #     # Still process footer area even if AI found nothing
+        #     img_cv = remove_footer_area(img_cv, page_num, groq_client)
+        #     # Convert back to PIL format and add to results
+        #     modified_images.append(Image.fromarray(img_cv))
+        #     continue
         
         print(f"   Page {page_num}: AI identified {len(ai_analysis)} items to remove")
         
@@ -642,7 +664,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
                     
                     # Remove the text region from image
                     # Use minimal padding for text to fit exactly
-                    remove_region(img_cv, bbox, padding=TEXT_PADDING)
+                    # remove_region(img_cv, bbox, padding=TEXT_PADDING)
                     
                     print(f"🗑️ Removed chunk: '{chunk['text'].strip()}' (Reason: {reason}, Confidence: {confidence})")
                     removed_count += 1
@@ -655,15 +677,14 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         img_cv = remove_footer_area(img_cv, page_num, groq_client)
         
         # Convert back to PIL format and add to results
-        modified_images.append(Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)))
-        del img_cv, enhanced_bottom, data_bottom, bottom_chunks
-        del enhanced_top, data_top, top_chunks
+        modified_images.append(Image.fromarray(img_cv))
+        del img_cv
         gc.collect()
     
     return modified_images
 
 # New or changed function signature and internals
-def create_contextual_text_chunks(data, original_image_height=None, bottom_25_percent_only=True, scale: float = 1.0):
+def create_contextual_text_chunks(data, original_image_height=None, bottom_25_percent_only=True, scale: float = 1.0, region_offset_top: int = None):
     """
     Create contextual text chunks from Tesseract output data.
     Groups related text elements into meaningful chunks for better AI analysis.
@@ -671,8 +692,9 @@ def create_contextual_text_chunks(data, original_image_height=None, bottom_25_pe
     Args:
         data: Tesseract output data dictionary
         original_image_height: Height of the original image (needed to adjust coordinates for bottom 25% processing)
-        bottom_25_percent_only: If True, adjust coordinates for bottom 25% region processing
+        bottom_25_percent_only: If True, adjust coordinates for bottom 25% region processing (ignored if region_offset_top is set)
         scale: upscale factor applied to the OCR image (e.g., 2.0 when fx=fy=2 in enhance_image_region)
+        region_offset_top: If provided, use this as the y-offset directly (overrides bottom_25_percent_only logic)
     """
     if not data or 'text' not in data:
         return []
@@ -680,9 +702,13 @@ def create_contextual_text_chunks(data, original_image_height=None, bottom_25_pe
     chunks = []
     current_chunk = None
     
-    # Calculate offset for bottom region if needed (in original coordinates)
+    # Calculate offset for region (in original coordinates)
     y_offset = 0
-    if bottom_25_percent_only and original_image_height:
+    if region_offset_top is not None:
+        # Use explicit offset provided by caller
+        y_offset = region_offset_top
+    elif bottom_25_percent_only and original_image_height:
+        # Legacy behavior: calculate offset for bottom 25% region
         y_offset = int(original_image_height * OCR_REGION_START_RATIO)
 
     text_elements = []
@@ -706,7 +732,7 @@ def create_contextual_text_chunks(data, original_image_height=None, bottom_25_pe
 
             # Downscale to original image coordinates and add region offset
             left = int(round(left_up / sx))
-            top = int(round(top_up / sy)) + (y_offset if bottom_25_percent_only else 0)
+            top = int(round(top_up / sy)) + y_offset
             width = int(round(width_up / sx))
             height = int(round(height_up / sy))
 

@@ -51,7 +51,8 @@ DEFAULT_CONFIG = {
             "User Manual",
             "CAD",
             "ZIP",
-            "Catalog"
+            "Catalog",
+            "EDZ"
         ],
         "per_type_limits": {
             "Data Sheet": 1,
@@ -59,7 +60,8 @@ DEFAULT_CONFIG = {
             "User Manual": 1,
             "CAD": 4,
             "ZIP": 2,
-            "Catalog": 1
+            "Catalog": 1,
+            "EDZ": 1
         }
     }
 }

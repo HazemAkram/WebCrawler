@@ -425,6 +425,8 @@ def infer_extension_from_url_and_headers(url: str, headers: dict = None) -> str:
         'model/stl': 'stl',
         'application/sla': 'stl',
         'application/x-navistyle': 'stl',
+        'application/x-edz': 'edz',
+        'application/edz': 'edz',
     }
     
     # First, try to get extension from headers
@@ -690,7 +692,7 @@ async def download_pdf_links(
                 scan_full_page=True,
                 remove_overlay_elements=True,
                 verbose=True,
-                # simulate_user=True,
+                simulate_user=True,
                 js_code=js_commands,
             )
         )
@@ -1329,6 +1331,8 @@ def get_browser_config() -> BrowserConfig:
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
         headless=True,  # Whether to run in headless mode (no GUI)
+        viewport_height=1080,
+        viewport_width=1920,
         verbose=True,  # Enable verbose logging
         user_agent = user_agent,  # Custom headers to include
         extra_args=[
@@ -1422,15 +1426,14 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
         instruction=(
             "You are given filtered HTML from a product page, including elements for the product name (via provided selectors)"
             " and anchors for downloadable technical documents and CAD files.\n"
-            "Extract technical PDFs, CAD files (STEP, IGES, DWG, DXF, STL), ZIP archives, and other downloadable assets. For each document, output: url, text, type, language, priority, productName.\n"
-            "For PDFs, we are searching for Data Sheet, Technical Drawing, Catalog, User Manual and info cards.\n"
+            "Extract technical PDFs, CAD files (STEP, IGES, DWG, DXF, STL), ZIP archives, EDZ files, and other downloadable assets. For each document, output: url, text, type, language, priority, productName.\n"            "For PDFs, we are searching for Data Sheet, Technical Drawing, Catalog, User Manual and info cards.\n"
             "if one file type has more than one language, return just one file with the most common language.\n"
             "- productName: the exact product title text from the last selector, do not guess or infer the product name.\n"
             "    - productName must be an English product name.\n"
             "- url: absolute link to the file. Convert relative links using the page domain.\n"
             "    - Do not add any escape characters to the url.\n"
             "- text: the link text or button text describing the file.\n"
-            "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual, CAD, ZIP, STEP, STP, IGES, DWG, DXF, STL, or Generic.\n"
+            "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual, CAD, ZIP, EDZ, STEP, STP, IGES, DWG, DXF, STL, or Generic.\n"
             "    - if one file type has more than one language, return just one file with the most common language. (If you have multiple languages, return just one file with the most common language.)\n"
             "- language: language code like EN/DE/TR or Unknown.\n"
             "- priority: High for Data Sheet/Technical Drawing/User Manual/CAD, Medium for Catalog/ZIP.\n"

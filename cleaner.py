@@ -569,7 +569,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         ocr_config = "--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
         
         # Process page in 4 equal-height bands: [0-25%], [25-50%], [50-75%], [75-100%]
-        bands = [(0.0, 0.30), (0.30, 0.60), (0.60, 0.90), (0.90, 1.0)]
+        bands = [(0.0, 0.30), (0.26, 0.60), (0.56, 0.90), (0.86, 1.0)]
         text_chunks = []
         
         for band_idx, (start_ratio, end_ratio) in enumerate(bands, 1):
@@ -590,7 +590,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
                 data_band,
                 original_image_height=original_height,
                 bottom_25_percent_only=False,
-                scale=1.0,
+                scale=2.0,
                 region_offset_top=region_offset
             )
             
@@ -664,7 +664,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
                     
                     # Remove the text region from image
                     # Use minimal padding for text to fit exactly
-                    # remove_region(img_cv, bbox, padding=TEXT_PADDING)
+                    remove_region(img_cv, bbox, padding=TEXT_PADDING)
                     
                     print(f"🗑️ Removed chunk: '{chunk['text'].strip()}' (Reason: {reason}, Confidence: {confidence})")
                     removed_count += 1

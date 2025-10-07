@@ -461,6 +461,104 @@ def is_pdf_extension(ext: str) -> bool:
     return ext_clean == 'pdf'
 
 
+def normalize_language_code(language: str) -> str:
+    """
+    Normalize language strings to short uppercase codes where possible.
+    Examples: "English" -> "EN", "DE", "TR"; otherwise "Unknown".
+    """
+    if not language:
+        return "Unknown"
+    lang = language.strip().lower()
+    if lang in {"en", "eng", "english"}:
+        return "EN"
+    if lang in {"de", "ger", "deu", "german", "deutsch"}:
+        return "DE"
+    if lang in {"tr", "tur", "turkish", "türkçe"}:
+        return "TR"
+    # Common others
+    if lang in {"fr", "fra", "fre", "french"}:
+        return "FR"
+    if lang in {"es", "spa", "spanish"}:
+        return "ES"
+    return "Unknown"
+
+
+def parse_content_disposition_filename(header_value: str) -> str:
+    """
+    Extract filename from Content-Disposition header (RFC 5987/6266 handling).
+    Returns empty string if none.
+    """
+    if not header_value:
+        return ""
+    try:
+        value = header_value
+        # filename* takes precedence
+        match_star = re.search(r"filename\*=([^']*)''([^;]+)", value, re.IGNORECASE)
+        if match_star:
+            # filename*=utf-8''encoded
+            enc = match_star.group(1) or 'utf-8'
+            raw = match_star.group(2)
+            try:
+                from urllib.parse import unquote
+                decoded = unquote(raw)
+                return decoded
+            except Exception:
+                return raw
+        match = re.search(r'filename="?([^";]+)"?', value, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    except Exception:
+        return ""
+    return ""
+
+
+def sniff_extension_from_bytes(content: bytes) -> str:
+    """
+    Infer file extension by inspecting magic bytes/content.
+    Handles PDF, ZIP, STEP/STP, IGES, DWG, DXF, STL (basic heuristics).
+    Returns empty string if unknown.
+    """
+    if not content:
+        return ""
+    head = content[:512]
+    # PDF
+    if head.startswith(b"%PDF"):
+        return "pdf"
+    # ZIP (also common for many CAD package downloads)
+    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
+        return "zip"
+    # STEP/STP
+    if b"ISO-10303-21" in head or b"STEP-File" in head:
+        return "step"
+    # IGES: often starts with 'S      1' in ASCII fixed-width records
+    if head[:1] == b'S' and b"IGES" in head:
+        return "iges"
+    # DWG: AC10xx signature
+    if head.startswith(b"AC1"):
+        return "dwg"
+    # DXF: ASCII begins with 0\nSECTION or 999\n
+    try:
+        txt = head.decode(errors='ignore')
+        if txt.lstrip().startswith("0\nSECTION") or txt.lstrip().startswith("999\n") or txt.lstrip().upper().startswith("SECTION"):
+            return "dxf"
+        # STL ASCII: starts with 'solid'
+        if txt.lstrip().lower().startswith("solid"):
+            return "stl"
+    except Exception:
+        pass
+    # STL binary: 80-byte header then uint32 triangles; heuristic: if size fits pattern
+    if len(content) > 84:
+        try:
+            import struct
+            tri_count = struct.unpack('<I', content[80:84])[0]
+            # Each triangle is 50 bytes; check rough size consistency (allow slack)
+            if 80 + 4 + tri_count * 50 <= len(content) + 200:
+                return "stl"
+        except Exception:
+            pass
+    return ""
+
+
 def generate_generic_filename_from_llm_text(pdf_text: str, pdf_type: str, pdf_language: str, product_name: str, ext: str) -> str:
     """
     Generate an appropriate filename for any file type using LLM extracted text.
@@ -650,6 +748,10 @@ async def download_pdf_links(
         pdf_docs = []
         other_docs = []
         seen_urls_in_page = set()
+        pdf_cfg = DEFAULT_CONFIG.get("pdf_settings", {})
+        allowed_types = set(t.lower() for t in pdf_cfg.get("allowed_types", [])) if pdf_cfg else set()
+        per_type_limits = {k.lower(): v for k, v in (pdf_cfg.get("per_type_limits", {}) or {}).items()}
+        per_type_counts: dict[str, int] = {}
 
         for item in extracted_data:
             file_url = item.get('url', '')
@@ -668,19 +770,29 @@ async def download_pdf_links(
             # Infer extension from URL (we'll refine with headers during download)
             ext = infer_extension_from_url_and_headers(file_url)
             
+            # Allowed types filtering (by semantic type string from LLM)
+            item_type = (item.get('type') or 'Unknown').strip()
+            item_type_lc = item_type.lower()
+            if allowed_types and item_type_lc not in allowed_types:
+                log_message(f"⏭️ Skipping disallowed type: {item_type}", "INFO")
+                continue
+            # Per-type limit enforcement
+            limit = per_type_limits.get(item_type_lc)
+            if limit is not None:
+                count = per_type_counts.get(item_type_lc, 0)
+                if count >= limit:
+                    log_message(f"📊 Skipping '{item_type}' (per-type limit {limit} reached)", "INFO")
+                    continue
             # Classify as PDF or other
             if is_pdf_extension(ext):
-                # Only add PDFs if we haven't reached the limit
-                if len(pdf_docs) < 3:
-                    pdf_docs.append(item)
-                    log_message(f"✅ Validated PDF ({len(pdf_docs)}/3): {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
-                else:
-                    log_message(f"📊 Skipped PDF (limit reached): {item.get('type', 'Unknown')}", "INFO")
+                pdf_docs.append(item)
+                per_type_counts[item_type_lc] = per_type_counts.get(item_type_lc, 0) + 1
+                log_message(f"✅ Accepted PDF: {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
             else:
-                # Add all other file types without limit
                 other_docs.append(item)
+                per_type_counts[item_type_lc] = per_type_counts.get(item_type_lc, 0) + 1
                 file_type = item.get('type', 'Unknown')
-                log_message(f"✅ Validated {ext.upper() if ext else 'file'}: {file_type} - {item.get('text', 'Unknown')}", "INFO")
+                log_message(f"✅ Accepted {ext.upper() if ext else 'file'}: {file_type} - {item.get('text', 'Unknown')}", "INFO")
 
         # Check if any files were found
         total_files = len(pdf_docs) + len(other_docs)
@@ -756,12 +868,13 @@ async def download_pdf_links(
         log_message(f"📥 Starting download of {len(all_files)} file(s)", "INFO")
         saved_files = []
         has_datasheet = False
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+        timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as session:
             for i, file_info in enumerate(all_files, 1):
                 file_url = file_info['url']
                 file_text = file_info['text']
                 file_type = file_info['type']
-                file_language = file_info.get('language', 'Unknown')
+                file_language = normalize_language_code(file_info.get('language', 'Unknown'))
                 file_priority = file_info.get('priority', 'Unknown')
                 priority_emoji = "🔴" if file_priority == 'High' else "🟡" if file_priority == 'Medium' else "🟢"
                 
@@ -798,13 +911,30 @@ async def download_pdf_links(
                         log_message(f"   Will re-download and process: {file_url}", "INFO")
                 
                 try:
-                    async with session.get(file_url) as resp:
+                    # basic retry with backoff
+                    attempt = 0
+                    max_attempts = 3
+                    last_exc = None
+                    while attempt < max_attempts:
+                        try:
+                            resp = await session.get(file_url)
+                            break
+                        except Exception as req_exc:
+                            last_exc = req_exc
+                            attempt += 1
+                            await asyncio.sleep(1.5 * attempt)
+                    if attempt == max_attempts and last_exc:
+                        raise last_exc
+                    async with resp:
                         if resp.status == 200:
                             # Refine extension from response headers
                             refined_ext = infer_extension_from_url_and_headers(file_url, resp.headers)
                             if refined_ext:
                                 file_ext = refined_ext
                                 is_pdf = is_pdf_extension(file_ext)
+                            # Attempt filename from Content-Disposition
+                            cd_header = resp.headers.get('content-disposition') or resp.headers.get('Content-Disposition')
+                            cd_filename = parse_content_disposition_filename(cd_header) if cd_header else ""
                             
                             # Check file size before downloading
                             content_length = resp.headers.get('content-length')
@@ -823,12 +953,15 @@ async def download_pdf_links(
                                 log_message(f"⚠️ Skipping file larger than {MAX_SIZE_MB}MB: {file_url} (Size: {content_size_mb:.2f}MB)", "INFO")
                                 continue
                             
-                            # Validate content for PDFs: check if content starts with PDF magic bytes
-                            if is_pdf and len(content) >= 4:
-                                pdf_magic_bytes = b'%PDF'
-                                if not content.startswith(pdf_magic_bytes):
-                                    log_message(f"⚠️ Skipping non-PDF content from {file_url}", "INFO")
-                                    continue
+                            # Validate and sniff extension from bytes
+                            sniffed_ext = sniff_extension_from_bytes(content)
+                            if sniffed_ext:
+                                file_ext = sniffed_ext
+                                is_pdf = is_pdf_extension(file_ext)
+                            # Validate content for PDFs via magic bytes
+                            if is_pdf and len(content) >= 4 and not content.startswith(b'%PDF'):
+                                log_message(f"⚠️ Skipping non-PDF content from {file_url}", "INFO")
+                                continue
                             
                             # Check if content is identical to any existing file
                             content_hash = hashlib.md5(content).hexdigest()
@@ -838,8 +971,17 @@ async def download_pdf_links(
                                 download_pdf_links.content_hashes = set()
                             download_pdf_links.content_hashes.add(content_hash)
                             
-                            # Generate filename using generic helper with proper extension
-                            filename = generate_generic_filename_from_llm_text(file_text, file_type, file_language, derived_product_name, file_ext or 'bin')
+                            # Determine filename: prefer Content-Disposition, else generated
+                            if cd_filename:
+                                cd_filename = sanitize_filename(cd_filename)
+                                # Ensure extension present and matches detected
+                                if file_ext and not cd_filename.lower().endswith(f'.{file_ext}'):
+                                    base = cd_filename.rsplit('.', 1)[0] if '.' in cd_filename else cd_filename
+                                    filename = f"{base}.{file_ext}"
+                                else:
+                                    filename = cd_filename
+                            else:
+                                filename = generate_generic_filename_from_llm_text(file_text, file_type, file_language, derived_product_name, file_ext or 'bin')
                             filename = filename.replace('\\', '_').replace('/', '_')
                             
                             # Ensure filename has proper extension
@@ -858,7 +1000,7 @@ async def download_pdf_links(
                                 lowered = os.path.basename(save_path).lower()
                                 cert_terms = [
                                     'certificate','certification','certifications','iso','tse', 'declaration', 
-                                    'coc','iec','emc','ped','fda','rohs','iecex','csa','warranty'
+                                    'coc','iec','emc','ped','fda','rohs','iecex','csa','warranty','contacts','list of ifm contacts','list of contacts'
                                 ]
                                 if any(term in lowered for term in cert_terms): 
                                     try: 
@@ -1281,14 +1423,18 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             "You are given filtered HTML from a product page, including elements for the product name (via provided selectors)"
             " and anchors for downloadable technical documents and CAD files.\n"
             "Extract technical PDFs, CAD files (STEP, IGES, DWG, DXF, STL), ZIP archives, and other downloadable assets. For each document, output: url, text, type, language, priority, productName.\n"
-            "- productName: the exact product title text from the second selector, do not guess or infer the product name.\n"
+            "For PDFs, we are searching for Data Sheet, Technical Drawing, Catalog, User Manual and info cards.\n"
+            "if one file type has more than one language, return just one file with the most common language.\n"
+            "- productName: the exact product title text from the last selector, do not guess or infer the product name.\n"
             "    - productName must be an English product name.\n"
             "- url: absolute link to the file. Convert relative links using the page domain.\n"
             "    - Do not add any escape characters to the url.\n"
             "- text: the link text or button text describing the file.\n"
-            "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual, CAD, ZIP, STEP, IGES, DWG, DXF, STL, or Generic.\n"
+            "- type: one of Data Sheet, Technical Drawing, Catalog, User Manual, CAD, ZIP, STEP, STP, IGES, DWG, DXF, STL, or Generic.\n"
+            "    - if one file type has more than one language, return just one file with the most common language. (If you have multiple languages, return just one file with the most common language.)\n"
             "- language: language code like EN/DE/TR or Unknown.\n"
             "- priority: High for Data Sheet/Technical Drawing/User Manual/CAD, Medium for Catalog/ZIP.\n"
+            "Do not extract a list of contact files.\n"
             "Ignore certificates/compliance-only links. Return a JSON array matching the schema. Ensure all entries use the same complete productName value."
         ),
         input_format="markdown",  # Format of the input content

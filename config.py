@@ -44,7 +44,23 @@ DEFAULT_CONFIG = {
     },
     "pdf_settings": {
         "max_file_size_mb": 60,  # Maximum PDF file size to download
-        "skip_large_files": True  # Whether to skip files larger than max_file_size_mb
+        "skip_large_files": True,  # Whether to skip files larger than max_file_size_mb
+        "allowed_types": [
+            "Data Sheet",
+            "Technical Drawing",
+            "User Manual",
+            "CAD",
+            "ZIP",
+            "Catalog"
+        ],
+        "per_type_limits": {
+            "Data Sheet": 1,
+            "Technical Drawing": 2,
+            "User Manual": 1,
+            "CAD": 4,
+            "ZIP": 2,
+            "Catalog": 1
+        }
     }
 }
 

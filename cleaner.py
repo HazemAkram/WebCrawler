@@ -566,7 +566,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         original_height = img_cv.shape[0]  # Store original image height for coordinate adjustment
         
         # OCR configuration
-        ocr_config = "--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
+        # ocr_config = "--oem 3 --psm 6 -c preserve_interword_spaces=1 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789./:-_"
         
         # Process page in 4 equal-height bands: [0-25%], [25-50%], [50-75%], [75-100%]
         bands = [(0.0, 0.30), (0.26, 0.60), (0.56, 0.90), (0.86, 1.0)]
@@ -581,7 +581,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
             data_band = pytesseract.image_to_data(
                 enhanced_band,
                 output_type=pytesseract.Output.DICT,
-                config=ocr_config
+                # config=ocr_config
             )
             
             # Create contextual chunks with proper offset (no scaling, direct coordinates)

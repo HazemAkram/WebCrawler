@@ -63,6 +63,21 @@ DEFAULT_CONFIG = {
             "Catalog": 1,
             "EDZ": 1
         }
+    },
+    "concurrency": {
+        "max_concurrent_sites": 4,  # Maximum number of sites to process in parallel
+        "max_products_per_site": 8,  # Maximum concurrent products per site
+        "max_concurrent_downloads": 16,  # Maximum concurrent file downloads
+        "max_concurrent_pdf_clean": None,  # Maximum concurrent PDF cleaning jobs (None = auto-detect)
+        "max_browser_pool_per_worker": 2,  # Maximum browser instances per worker
+        "per_domain_limit": 2,  # Maximum concurrent requests per domain
+        "enable_fast_category_regex": False,  # Use regex extraction for category pages (skip LLM)
+        "request_delay_jitter_ms": (100, 400),  # Random delay range in milliseconds
+        "retry_max_attempts": 3,  # Maximum retry attempts for failed requests
+        "retry_backoff_base": 2,  # Exponential backoff base multiplier
+        "browser_recycle_after_products": 50,  # Recycle browser after N products
+        "circuit_breaker_threshold": 5,  # Failed requests before circuit breaker trips
+        "circuit_breaker_timeout": 60,  # Seconds to wait before retrying failed domain
     }
 }
 

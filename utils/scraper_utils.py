@@ -25,9 +25,10 @@ from fake_useragent import UserAgent
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import re
+import random
 
 # AI-powered PDF processing is now handled automatically in cleaner.py
-from cleaner import pdf_processing
+from cleaner import pdf_processing, pdf_processing_async
 from dotenv import load_dotenv
 
 from crawl4ai import (
@@ -179,6 +180,32 @@ def log_message(message, level="INFO"):
         log_callback(message, level)
     else:
         print(f"[{level}] {message}")
+
+
+def get_host(url: str) -> str:
+    """
+    Extract hostname from URL for per-domain rate limiting.
+    
+    Args:
+        url (str): Full URL
+        
+    Returns:
+        str: Hostname (e.g., 'example.com')
+    """
+    try:
+        parsed = urlparse(url)
+        return parsed.netloc or parsed.hostname or "unknown"
+    except Exception:
+        return "unknown"
+
+
+async def add_jitter_delay():
+    """
+    Add a small random delay based on configuration to be polite to servers.
+    """
+    jitter_range = DEFAULT_CONFIG.get("concurrency", {}).get("request_delay_jitter_ms", (100, 400))
+    delay_ms = random.randint(jitter_range[0], jitter_range[1])
+    await asyncio.sleep(delay_ms / 1000.0)
 
 
 def sanitize_folder_name(product_name: str) -> str:
@@ -640,6 +667,8 @@ async def download_pdf_links(
         domain_name: str = None,
         api_key: str = None,
         cat_name: str = "Uncategorized",
+        client_session: aiohttp.ClientSession = None,
+        domain_semaphore: asyncio.Semaphore = None,
         ):
     
     """
@@ -871,7 +900,14 @@ async def download_pdf_links(
         saved_files = []
         has_datasheet = False
         timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as session:
+        
+        # Use provided session or create a new one
+        session_provided = client_session is not None
+        if not session_provided:
+            client_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout)
+        
+        try:
+            session = client_session
             for i, file_info in enumerate(all_files, 1):
                 file_url = file_info['url']
                 file_text = file_info['text']
@@ -913,20 +949,33 @@ async def download_pdf_links(
                         log_message(f"   Will re-download and process: {file_url}", "INFO")
                 
                 try:
-                    # basic retry with backoff
-                    attempt = 0
-                    max_attempts = 3
-                    last_exc = None
-                    while attempt < max_attempts:
-                        try:
-                            resp = await session.get(file_url)
-                            break
-                        except Exception as req_exc:
-                            last_exc = req_exc
-                            attempt += 1
-                            await asyncio.sleep(1.5 * attempt)
-                    if attempt == max_attempts and last_exc:
-                        raise last_exc
+                    # Add jitter delay for politeness
+                    await add_jitter_delay()
+                    
+                    # Acquire domain semaphore if provided
+                    if domain_semaphore:
+                        await domain_semaphore.acquire()
+                    
+                    try:
+                        # basic retry with backoff
+                        attempt = 0
+                        max_attempts = DEFAULT_CONFIG.get("concurrency", {}).get("retry_max_attempts", 3)
+                        backoff_base = DEFAULT_CONFIG.get("concurrency", {}).get("retry_backoff_base", 2)
+                        last_exc = None
+                        while attempt < max_attempts:
+                            try:
+                                resp = await session.get(file_url)
+                                break
+                            except Exception as req_exc:
+                                last_exc = req_exc
+                                attempt += 1
+                                await asyncio.sleep(backoff_base ** attempt + random.uniform(0, 1))
+                        if attempt == max_attempts and last_exc:
+                            raise last_exc
+                    finally:
+                        # Release domain semaphore
+                        if domain_semaphore:
+                            domain_semaphore.release()
                     async with resp:
                         if resp.status == 200:
                             # Refine extension from response headers
@@ -1024,8 +1073,13 @@ async def download_pdf_links(
                             if is_pdf:
                                 log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
                                 try:
-                                    pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
-                                    log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
+                                    # Use async PDF processing with process pool
+                                    success = await pdf_processing_async(file_path=save_path, api_key=api_key, log_callback=log_message)
+                                    if success:
+                                        log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
+                                    else:
+                                        log_message(f"⚠️ PDF cleaning had issues for {os.path.basename(save_path)}", "WARNING")
+                                        log_message(f"📄 Original PDF preserved: {os.path.basename(save_path)}", "INFO")
                                 except Exception as clean_error:
                                     log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")
                                     log_message(f"📄 Original PDF preserved: {os.path.basename(save_path)}", "INFO")
@@ -1035,8 +1089,15 @@ async def download_pdf_links(
                             log_message(f"❌ Failed to download: {file_url} (Status: {resp.status})", "ERROR")
                 except Exception as e:
                     log_message(f"❌ Error downloading {file_url}: {str(e)}", "ERROR")
+        finally:
+            # Close session only if we created it
+            if not session_provided:
+                await client_session.close()
     except Exception as e:
         log_message(f"⚠️ Error during file processing for {product_url}: {e}", "ERROR")
+        # Close session if we created it
+        if not session_provided and client_session:
+            await client_session.close()
         return {"productLink": product_url, "productName": None, "category": cat_name, "saved_count": 0, "has_datasheet": False}
     
     # Return summary
@@ -1330,7 +1391,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_height=1080,
         viewport_width=1920,
         verbose=True,  # Enable verbose logging
@@ -1531,7 +1592,8 @@ async def fetch_and_process_page(
         if "productLink" in venue:
             link = venue["productLink"].replace("/en/en/", "/en/")
             venue["productLink"] = link
-            seen_names.add(link)
+            # Don't add to seen_names here - let the caller decide
+            # seen_names.add(link)
             complete_venues.append(venue)
 
     if not complete_venues:
@@ -1692,7 +1754,8 @@ async def fetch_and_process_page_with_js(
                     continue
                 if "productLink" in product:
                     product["productLink"] = product["productLink"].replace("/en/en/", "/en/")
-                    seen_names.add(product["productLink"])
+                    # Don't add to seen_names here - let the caller decide
+                    # seen_names.add(product["productLink"])
                 complete_venues.append(product)
                 new_products += 1
             log_message(f"\tAdded {new_products} unique products", "INFO")

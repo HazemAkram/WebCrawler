@@ -26,7 +26,57 @@ from typing import List, Dict, Any
 import json
 from models.venue import TextRemove
 import re
-import gc 
+import gc
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+
+
+# Global process pool for PDF cleaning
+_pdf_process_pool = None
+
+
+def get_pdf_process_pool():
+    """
+    Get or create a shared ProcessPoolExecutor for PDF cleaning operations.
+    
+    Returns:
+        ProcessPoolExecutor: Shared process pool instance
+    """
+    global _pdf_process_pool
+    if _pdf_process_pool is None:
+        import os
+        max_workers = os.cpu_count() or 4
+        # Default to min(cores-1, 4) for CPU-intensive work
+        max_workers = min(max(max_workers - 1, 1), 4)
+        _pdf_process_pool = ProcessPoolExecutor(max_workers=max_workers)
+    return _pdf_process_pool
+
+
+async def pdf_processing_async(file_path: str, api_key: str, log_callback=None):
+    """
+    Async wrapper for PDF processing that runs in a process pool executor.
+    
+    Args:
+        file_path (str): Path to the PDF file to process
+        api_key (str): API key for AI processing
+        log_callback (function): Optional callback function for logging
+        
+    Returns:
+        bool: True if processing succeeded, False otherwise
+    """
+    loop = asyncio.get_running_loop()
+    executor = get_pdf_process_pool()
+    
+    try:
+        # Run CPU-intensive PDF processing in process pool
+        await loop.run_in_executor(executor, pdf_processing, file_path, api_key, log_callback)
+        return True
+    except Exception as e:
+        if log_callback:
+            log_callback(f"❌ PDF processing failed: {str(e)}", "ERROR")
+        else:
+            print(f"❌ PDF processing failed: {str(e)}")
+        return False
 
 
 # Configuration constants

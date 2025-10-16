@@ -20,7 +20,9 @@ from utils.scraper_utils import (
     get_browser_config,
     get_pdf_llm_strategy,
     get_regex_strategy,
+    get_host,
 )
+import aiohttp
 
 load_dotenv()
 
@@ -69,38 +71,54 @@ async def run_products(csv_path: str, output_folder: str = "output"):
     os.makedirs("CSVS", exist_ok=True)
     summaries = []
 
-    async with AsyncWebCrawler(config=browser_config) as crawler:
-        for idx, item in enumerate(items, start=1):
-            url = item["url"]
-            selectors = item["selectors"]
-            cat_name = item["cat_name"]
-            parsed = urlparse(url)
-            domain = parsed.netloc
-            session_id = f"products_{idx}"
-            _log(f"[{idx}/{len(items)}] Processing: {url}")
-            try:
-                summary = await download_pdf_links(
-                    crawler=crawler,
-                    product_url=url,
-                    output_folder=output_folder,
-                    pdf_selector=selectors,
-                    session_id=session_id,
-                    regex_strategy=regex_strategy,
-                    domain_name=domain,
-                    pdf_llm_strategy=pdf_llm_strategy,
-                    api_key=api_key,
-                    cat_name=cat_name,
-                )
-                if summary:
-                    summaries.append({
-                        "productLink": summary.get("productLink"),
-                        "productName": summary.get("productName"),
-                        "category": summary.get("category"),
-                        "saved_count": summary.get("saved_count"),
-                    })
-            except Exception as e:
-                _log(f"Error processing {url}: {e}")
-            await asyncio.sleep(1)
+    # Create shared HTTP session for downloads
+    timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as http_session:
+        # Create per-domain semaphores for rate limiting
+        domain_semaphores = {}
+        per_domain_limit = 2
+        
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            for idx, item in enumerate(items, start=1):
+                url = item["url"]
+                selectors = item["selectors"]
+                cat_name = item["cat_name"]
+                parsed = urlparse(url)
+                domain = parsed.netloc
+                session_id = f"products_{idx}"
+                
+                # Get or create domain semaphore
+                host = get_host(url)
+                if host not in domain_semaphores:
+                    domain_semaphores[host] = asyncio.Semaphore(per_domain_limit)
+                domain_sem = domain_semaphores[host]
+                
+                _log(f"[{idx}/{len(items)}] Processing: {url}")
+                try:
+                    summary = await download_pdf_links(
+                        crawler=crawler,
+                        product_url=url,
+                        output_folder=output_folder,
+                        pdf_selector=selectors,
+                        session_id=session_id,
+                        regex_strategy=regex_strategy,
+                        domain_name=domain,
+                        pdf_llm_strategy=pdf_llm_strategy,
+                        api_key=api_key,
+                        cat_name=cat_name,
+                        client_session=http_session,
+                        domain_semaphore=domain_sem,
+                    )
+                    if summary:
+                        summaries.append({
+                            "productLink": summary.get("productLink"),
+                            "productName": summary.get("productName"),
+                            "category": summary.get("category"),
+                            "saved_count": summary.get("saved_count"),
+                        })
+                except Exception as e:
+                    _log(f"Error processing {url}: {e}")
+                await asyncio.sleep(1)
 
     # Write summary CSV
     try:

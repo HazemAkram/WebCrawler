@@ -296,13 +296,16 @@ def stop_crawling():
 
 @app.route('/status')
 def get_status():
-    """Get current crawling status"""
+    """Get current crawling status with concurrency info"""
     global crawling_status
     
     # Calculate elapsed time
     elapsed_time = None
     if crawling_status['start_time']:
         elapsed_time = (datetime.now() - crawling_status['start_time']).total_seconds()
+    
+    # Get concurrency settings
+    concurrency_config = DEFAULT_CONFIG.get('concurrency', {})
     
     return jsonify({
         'is_running': crawling_status['is_running'],
@@ -312,7 +315,13 @@ def get_status():
         'total_venues': crawling_status['total_venues'],
         'elapsed_time': elapsed_time,
         'logs': crawling_status['logs'][-50:],  # Return last 50 logs
-        'stop_requested': crawling_status['stop_requested']
+        'stop_requested': crawling_status['stop_requested'],
+        'concurrency_settings': {
+            'max_concurrent_sites': concurrency_config.get('max_concurrent_sites', 4),
+            'max_products_per_site': concurrency_config.get('max_products_per_site', 8),
+            'max_concurrent_downloads': concurrency_config.get('max_concurrent_downloads', 16),
+            'per_domain_limit': concurrency_config.get('per_domain_limit', 2),
+        }
     })
 
 @app.route('/logs')

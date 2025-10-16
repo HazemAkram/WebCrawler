@@ -65,7 +65,7 @@ DEFAULT_CONFIG = {
         }
     },
     "concurrency": {
-        "max_concurrent_sites": 4,  # Maximum number of sites to process in parallel
+        "max_concurrent_sites": 1,  # Maximum number of sites to process in parallel
         "max_products_per_site": 8,  # Maximum concurrent products per site
         "max_concurrent_downloads": 16,  # Maximum concurrent file downloads
         "max_concurrent_pdf_clean": None,  # Maximum concurrent PDF cleaning jobs (None = auto-detect)

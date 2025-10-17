@@ -78,7 +78,15 @@ async def pdf_processing_async(file_path: str, api_key: str, log_callback=None):
             print(f"❌ PDF processing failed: {str(e)}")
         return False
 
-
+# Add this function to cleaner.py
+def cleanup_pdf_process_pool(log_callback=None):
+    """Cleanup the global PDF process pool."""
+    global _pdf_process_pool
+    if _pdf_process_pool is not None:
+        _pdf_process_pool.shutdown(wait=True)
+        _pdf_process_pool = None
+        print("✅ PDF process pool closed")
+    
 # Configuration constants
 QR_PADDING = 10              # Padding around QR codes (for QR removal)
 TEXT_PADDING = 1             # Minimal padding around text (for text removal)
@@ -98,6 +106,7 @@ FOOTER_DETECTION_THRESHOLD = 0.3  # Threshold for detecting footer content
 
 # Groq API configuration
 GROQ_MODEL = "openai/gpt-oss-120b"  # Default model for text analysis
+
 
 def get_groq_client(api_key):
     """

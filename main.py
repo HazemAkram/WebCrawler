@@ -130,6 +130,10 @@ class SharedResources:
                 pass
         self.browser_pool.clear()
         log_message("✅ Browser pool cleaned up", "INFO")
+
+
+        from cleaner import cleanup_pdf_process_pool
+        cleanup_pdf_process_pool()
     
     async def get_browser(self) -> AsyncWebCrawler:
         """Get a browser from the pool or create a new one."""
@@ -756,10 +760,17 @@ async def crawl_from_sites_csv_sequential_legacy(input_file: str, api_key: str =
     log_message(f"PDF LLM strategy usage: {pdf_llm_strategy.show_usage()}", "INFO")
     log_message(f"LLM strategy usage: {llm_strategy.show_usage()}", "INFO")
     log_message(f"Crawling completed. Total venues processed: {len(all_venues)}", "SUCCESS")
-async def main():
-    log_message(f"{'='*50} Starting crawling {'='*50}", "INFO")
-    await crawl_from_sites_csv("sites.csv")
-    log_message(f"{'='*50} Crawl completed {'='*50}", "INFO")
 
+
+async def main():
+
+    try:
+        log_message(f"{'='*50} Starting crawling {'='*50}", "INFO")
+        await crawl_from_sites_csv("sites.csv")
+        log_message(f"{'='*50} Crawl completed {'='*50}", "INFO")
+    finally:
+        #Ensure PDF process pool is cleaned up
+        from cleaner import cleanup_pdf_process_pool
+        cleanup_pdf_process_pool()
 if __name__ == "__main__":
     asyncio.run(main()) 

@@ -673,6 +673,15 @@ def server_info():
     except Exception as e:
         return jsonify({'error': str(e)})
 
+@app.route('/product-count')
+def product_count():
+    """Get the count of products in the output folder"""
+    try:
+        count_info = count_products_in_output()
+        return jsonify(count_info)
+    except Exception as e:
+        return jsonify({'error': f'Failed to count products: {str(e)}'}), 500
+
 def get_folder_size(folder_path):
     """Calculate folder size in GB"""
     try:
@@ -685,6 +694,62 @@ def get_folder_size(folder_path):
         return f"{total_size / (1024**3):.2f} GB"
     except:
         return "Unknown"
+
+def count_products_in_output():
+    """
+    Count the total number of products in the output folder.
+    Structure: output/Category/Product/
+    Returns: dict with total products and breakdown by category
+    """
+    output_folder = "output"
+    if not os.path.exists(output_folder):
+        return {
+            "total_products": 0,
+            "total_categories": 0,
+            "categories": {},
+            "message": "Output folder does not exist"
+        }
+    
+    total_products = 0
+    categories = {}
+    
+    try:
+        # Iterate through each category folder
+        for category_name in os.listdir(output_folder):
+            category_path = os.path.join(output_folder, category_name)
+            
+            # Skip if not a directory
+            if not os.path.isdir(category_path):
+                continue
+            
+            # Count product folders within this category
+            product_count = 0
+            try:
+                for item in os.listdir(category_path):
+                    item_path = os.path.join(category_path, item)
+                    if os.path.isdir(item_path):
+                        product_count += 1
+            except (OSError, PermissionError):
+                # Skip categories we can't read
+                continue
+            
+            categories[category_name] = product_count
+            total_products += product_count
+        
+        return {
+            "total_products": total_products,
+            "total_categories": len(categories),
+            "categories": categories,
+            "message": "Success"
+        }
+    
+    except Exception as e:
+        return {
+            "total_products": 0,
+            "total_categories": 0,
+            "categories": {},
+            "message": f"Error counting products: {str(e)}"
+        }
 
 # ===================== Products (individual installs) =====================
 

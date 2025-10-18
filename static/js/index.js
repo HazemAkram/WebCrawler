@@ -265,6 +265,112 @@ function showAlert(message, type) {
 
 function downloadOutput() { window.open('/download_output', '_blank'); }
 
-document.addEventListener('DOMContentLoaded', function () { updateStatus('idle'); });
+// Product statistics functions
+function refreshProductStats() {
+    fetch('/product-count')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error fetching product stats:', data.error);
+                return;
+            }
+            
+            document.getElementById('totalProducts').textContent = data.total_products || 0;
+            document.getElementById('totalCategories').textContent = data.total_categories || 0;
+            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            
+            // Store detailed stats for later use
+            window.productStats = data;
+        })
+        .catch(error => {
+            console.error('Error fetching product stats:', error);
+            showAlert('Error loading product statistics', 'danger');
+        });
+}
+
+function showDetailedStats() {
+    if (!window.productStats) {
+        showAlert('Please refresh statistics first', 'warning');
+        return;
+    }
+    
+    const stats = window.productStats;
+    let detailsHtml = `
+        <div class="modal fade" id="statsModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Detailed Product Statistics</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>Total Products:</strong> ${stats.total_products}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Total Categories:</strong> ${stats.total_categories}
+                            </div>
+                        </div>
+                        <h6>Products by Category:</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Category</th>
+                                        <th>Products</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+    `;
+    
+    // Sort categories by product count (descending)
+    const sortedCategories = Object.entries(stats.categories || {})
+        .sort((a, b) => b[1] - a[1]);
+    
+    sortedCategories.forEach(([category, count]) => {
+        detailsHtml += `
+            <tr>
+                <td>${category}</td>
+                <td>${count}</td>
+            </tr>
+        `;
+    });
+    
+    detailsHtml += `
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if any
+    const existingModal = document.getElementById('statsModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Add modal to page
+    document.body.insertAdjacentHTML('beforeend', detailsHtml);
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('statsModal'));
+    modal.show();
+}
+
+// Auto-refresh product stats on page load
+document.addEventListener('DOMContentLoaded', function () { 
+    updateStatus('idle');
+    refreshProductStats();
+    
+    // Auto-refresh stats every 30 seconds
+    setInterval(refreshProductStats, 30000);
+});
 
 

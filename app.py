@@ -653,6 +653,9 @@ def server_info():
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
         
+        # Get product count information
+        product_stats = count_products_in_output()
+        
         server_info = {
             'python_version': platform.python_version(),
             'platform': platform.platform(),
@@ -664,7 +667,8 @@ def server_info():
             'disk_total': f"{disk.total / (1024**3):.1f} GB",
             'disk_free': f"{disk.free / (1024**3):.1f} GB",
             'disk_percent': disk.percent,
-            'output_folder_size': get_folder_size("output")
+            'output_folder_size': get_folder_size("output"),
+            'product_stats': product_stats
         }
         
         return jsonify(server_info)
@@ -674,13 +678,13 @@ def server_info():
         return jsonify({'error': str(e)})
 
 @app.route('/product-count')
-def product_count():
+def get_product_count():
     """Get the count of products in the output folder"""
     try:
-        count_info = count_products_in_output()
-        return jsonify(count_info)
+        product_stats = count_products_in_output()
+        return jsonify(product_stats)
     except Exception as e:
-        return jsonify({'error': f'Failed to count products: {str(e)}'}), 500
+        return jsonify({'error': str(e)}), 500
 
 def get_folder_size(folder_path):
     """Calculate folder size in GB"""
@@ -696,59 +700,66 @@ def get_folder_size(folder_path):
         return "Unknown"
 
 def count_products_in_output():
-    """
-    Count the total number of products in the output folder.
+    """Count the total number of products in the output folder.
+    
+    Products are defined as subdirectories within category directories.
     Structure: output/Category/Product/
-    Returns: dict with total products and breakdown by category
+    
+    Returns:
+        dict: Contains total products, categories, and breakdown by category
     """
-    output_folder = "output"
-    if not os.path.exists(output_folder):
-        return {
-            "total_products": 0,
-            "total_categories": 0,
-            "categories": {},
-            "message": "Output folder does not exist"
-        }
-    
-    total_products = 0
-    categories = {}
-    
     try:
-        # Iterate through each category folder
-        for category_name in os.listdir(output_folder):
-            category_path = os.path.join(output_folder, category_name)
+        output_folder = "output"
+        if not os.path.exists(output_folder):
+            return {
+                'total_products': 0,
+                'total_categories': 0,
+                'categories': {}
+            }
+        
+        categories = {}
+        total_products = 0
+        
+        # Walk through the output directory
+        for item in os.listdir(output_folder):
+            item_path = os.path.join(output_folder, item)
             
             # Skip if not a directory
-            if not os.path.isdir(category_path):
+            if not os.path.isdir(item_path):
                 continue
+                
+            # Skip CSVS folder if it somehow ends up in output
+            if item == "CSVS":
+                continue
+                
+            category_name = item
+            products_in_category = 0
             
-            # Count product folders within this category
-            product_count = 0
+            # Count products (subdirectories) in this category
             try:
-                for item in os.listdir(category_path):
-                    item_path = os.path.join(category_path, item)
-                    if os.path.isdir(item_path):
-                        product_count += 1
+                for subitem in os.listdir(item_path):
+                    subitem_path = os.path.join(item_path, subitem)
+                    if os.path.isdir(subitem_path):
+                        products_in_category += 1
             except (OSError, PermissionError):
-                # Skip categories we can't read
+                # Skip if we can't read the directory
                 continue
             
-            categories[category_name] = product_count
-            total_products += product_count
+            categories[category_name] = products_in_category
+            total_products += products_in_category
         
         return {
-            "total_products": total_products,
-            "total_categories": len(categories),
-            "categories": categories,
-            "message": "Success"
+            'total_products': total_products,
+            'total_categories': len(categories),
+            'categories': categories
         }
-    
+        
     except Exception as e:
         return {
-            "total_products": 0,
-            "total_categories": 0,
-            "categories": {},
-            "message": f"Error counting products: {str(e)}"
+            'total_products': 0,
+            'total_categories': 0,
+            'categories': {},
+            'error': str(e)
         }
 
 # ===================== Products (individual installs) =====================

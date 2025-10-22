@@ -29,7 +29,6 @@ class PDF(BaseModel):
     type: str
     language: str
     priority: str
-    productName: str
 
 
 class TextRemove(BaseModel):

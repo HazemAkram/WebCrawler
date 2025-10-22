@@ -514,7 +514,7 @@ def enhance_image_region(img_cv, start_ratio: float, end_ratio: float):
         end_ratio: End position as ratio of image height (0.0 to 1.0)
         
     Returns:
-        PIL Image: Enhanced grayscale subregion
+        PIL Image:  grayscale subregion
     """
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
     gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
@@ -575,8 +575,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         for band_idx, (start_ratio, end_ratio) in enumerate(bands, 1):
             # Extract and enhance band
             enhanced_band = enhance_image_region(img_cv, start_ratio, end_ratio)
-            
-            enhanced_band.save(f"enhanced_band_{band_idx}.png")
+                        
             # Perform OCR on band
             data_band = pytesseract.image_to_data(
                 enhanced_band,

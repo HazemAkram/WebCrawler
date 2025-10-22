@@ -19,7 +19,6 @@ PDF_KEYS = [
     "type",
     "language",
     "priority",
-    "productName",
 ]
 
 TEXT_REMOVE_KEYS = [

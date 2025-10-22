@@ -15,6 +15,9 @@ import traceback
 import asyncio
 import gc 
 import shutil  # Add import for file copying operations
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
+from functools import partial
+import multiprocessing
 
 import aiofiles
 import aiohttp
@@ -628,6 +631,61 @@ def generate_generic_filename_from_llm_text(pdf_text: str, pdf_type: str, pdf_la
     return filename
 
 
+def _process_pdf_wrapper(file_path: str, api_key: str) -> dict:
+    """
+    Wrapper function for PDF processing to be called in a separate process.
+    This function must be at module level for pickling by ProcessPoolExecutor.
+    
+    Args:
+        file_path: Path to the PDF file to process
+        api_key: API key for AI processing
+        
+    Returns:
+        dict: Result with 'success', 'file_path', and optional 'error' keys
+    """
+    try:
+        # Define a simple log callback that doesn't use external state
+        # Using ASCII characters to avoid encoding issues in subprocess
+        def log_callback(message, level="INFO"):
+            try:
+                # Try to print with UTF-8, fallback to ASCII if it fails
+                print(f"[{level}] [{os.path.basename(file_path)}] {message}", flush=True)
+            except UnicodeEncodeError:
+                # Fallback: remove non-ASCII characters
+                ascii_message = message.encode('ascii', 'ignore').decode('ascii')
+                print(f"[{level}] [{os.path.basename(file_path)}] {ascii_message}", flush=True)
+        
+        pdf_processing(file_path=file_path, api_key=api_key, log_callback=log_callback)
+        return {
+            'success': True,
+            'file_path': file_path
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'file_path': file_path,
+            'error': str(e)
+        }
+
+
+def _cleanup_failed_pdf(file_path: str, log_message_func=None) -> None:
+    """
+    Clean up a failed PDF file and its temporary artifacts.
+    
+    Args:
+        file_path: Path to the PDF file to remove
+        log_message_func: Optional logging function
+    """
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            if log_message_func:
+                log_message_func(f"🗑️ Removed failed PDF: {os.path.basename(file_path)}", "INFO")
+    except Exception as e:
+        if log_message_func:
+            log_message_func(f"⚠️ Failed to remove file {os.path.basename(file_path)}: {str(e)}", "WARNING")
+
+
 # https://www.ors.com.tr/en/tek-sirali-sabit-bilyali-rulmanlar
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
@@ -673,14 +731,12 @@ async def download_pdf_links(
         log_message(f"🔍 Starting file extraction for product page", "INFO")
         log_message(f"📍 Using selectors: {pdf_selector}", "INFO")
 
-        log_message(f"Name Selector: {pdf_selector[1]}", "INFO")
+        log_message(f"Name Selector: {pdf_selector[-1]}", "INFO")
 
 
         # Enhanced JavaScript product name extraction using helper function
         # The second selector will be used as primary, with comprehensive fallback selectors
-        js_commands = generate_product_name_js_commands(pdf_selector[1])
-
-        product_url = f"{product_url}#documents"
+        js_commands = generate_product_name_js_commands(pdf_selector[-1])
         # Crawl the page with CSS selector targeting PDF links
         pdf_result = await crawler.arun(
             url=product_url,
@@ -869,6 +925,7 @@ async def download_pdf_links(
         # Download all files with duplicate checking (SSL verification disabled)
         log_message(f"📥 Starting download of {len(all_files)} file(s)", "INFO")
         saved_files = []
+        pdfs_to_clean = []  # Collect PDFs for parallel processing
         has_datasheet = False
         timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as session:
@@ -1020,21 +1077,86 @@ async def download_pdf_links(
                             if file_type and ('data sheet' in file_type.lower() or 'datasheet' in file_type.lower() or 'specification' in file_type.lower()):
                                 has_datasheet = True
 
-                            # AI-powered PDF cleaning (only for PDFs)
+                            # Collect PDFs for parallel processing later
                             if is_pdf:
-                                log_message(f"🧹 Starting PDF cleaning for: {os.path.basename(save_path)}", "INFO")
-                                try:
-                                    pdf_processing(file_path=save_path, api_key=api_key, log_callback=log_message)
-                                    log_message(f"✨ PDF cleaning completed: {os.path.basename(save_path)}", "INFO")
-                                except Exception as clean_error:
-                                    log_message(f"⚠️ PDF cleaning failed for {os.path.basename(save_path)}: {str(clean_error)}", "WARNING")
-                                    log_message(f"📄 Original PDF preserved: {os.path.basename(save_path)}", "INFO")
+                                pdfs_to_clean.append(save_path)
+                                log_message(f"✅ Downloaded PDF (queued for cleaning): {os.path.basename(save_path)}", "INFO")
                             else:
                                 log_message(f"✅ Saved {file_type_label}: {os.path.basename(save_path)}", "INFO")
                         else:
                             log_message(f"❌ Failed to download: {file_url} (Status: {resp.status})", "ERROR")
                 except Exception as e:
                     log_message(f"❌ Error downloading {file_url}: {str(e)}", "ERROR")
+        
+        # Parallel PDF cleaning with timeout and error handling
+        if pdfs_to_clean:
+            log_message(f"🧹 Starting parallel PDF cleaning for {len(pdfs_to_clean)} PDF(s)", "INFO")
+            
+            # Determine worker count: use CPU count / 2, but at least 1 and at most 4
+            cpu_count = multiprocessing.cpu_count()
+            max_workers = max(1, min(cpu_count // 2, 4))
+            log_message(f"🔧 Using {max_workers} parallel workers for PDF cleaning", "INFO")
+            
+            # Timeout per PDF: 5 minutes (300 seconds)
+            PDF_TIMEOUT = 300
+            
+            # Track successful and failed PDFs
+            successful_pdfs = []
+            failed_pdfs = []
+            
+            # Process PDFs in parallel using ProcessPoolExecutor
+            loop = asyncio.get_event_loop()
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all PDF processing tasks
+                future_to_pdf = {}
+                for pdf_path in pdfs_to_clean:
+                    future = executor.submit(_process_pdf_wrapper, pdf_path, api_key)
+                    future_to_pdf[future] = pdf_path
+                
+                # Wait for results with timeout handling
+                for future, pdf_path in future_to_pdf.items():
+                    pdf_name = os.path.basename(pdf_path)
+                    try:
+                        # Wait for the result with timeout
+                        result = await loop.run_in_executor(
+                            None, 
+                            partial(future.result, timeout=PDF_TIMEOUT)
+                        )
+                        
+                        if result['success']:
+                            successful_pdfs.append(pdf_path)
+                            log_message(f"✨ PDF cleaning completed: {pdf_name}", "INFO")
+                        else:
+                            failed_pdfs.append(pdf_path)
+                            error_msg = result.get('error', 'Unknown error')
+                            log_message(f"❌ PDF cleaning failed for {pdf_name}: {error_msg}", "ERROR")
+                            _cleanup_failed_pdf(pdf_path, log_message)
+                            # Remove from saved_files list
+                            if pdf_path in saved_files:
+                                saved_files.remove(pdf_path)
+                    
+                    except FuturesTimeoutError:
+                        failed_pdfs.append(pdf_path)
+                        log_message(f"⏱️ PDF cleaning timeout ({PDF_TIMEOUT}s) for {pdf_name}", "ERROR")
+                        log_message(f"🗑️ Removing hung PDF: {pdf_name}", "WARNING")
+                        _cleanup_failed_pdf(pdf_path, log_message)
+                        # Remove from saved_files list
+                        if pdf_path in saved_files:
+                            saved_files.remove(pdf_path)
+                    
+                    except Exception as e:
+                        failed_pdfs.append(pdf_path)
+                        log_message(f"❌ Unexpected error cleaning {pdf_name}: {str(e)}", "ERROR")
+                        _cleanup_failed_pdf(pdf_path, log_message)
+                        # Remove from saved_files list
+                        if pdf_path in saved_files:
+                            saved_files.remove(pdf_path)
+            
+            # Summary of PDF cleaning
+            log_message(f"📊 PDF cleaning summary: {len(successful_pdfs)} successful, {len(failed_pdfs)} failed", "INFO")
+            if failed_pdfs:
+                log_message(f"❌ Failed PDFs: {', '.join([os.path.basename(p) for p in failed_pdfs])}", "WARNING")
+    
     except Exception as e:
         log_message(f"⚠️ Error during file processing for {product_url}: {e}", "ERROR")
         return {"productLink": product_url, "productName": None, "category": cat_name, "saved_count": 0, "has_datasheet": False}
@@ -1330,7 +1452,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_height=1080,
         viewport_width=1920,
         verbose=True,  # Enable verbose logging
@@ -1424,12 +1546,11 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
         schema=PDF.model_json_schema(),
         extraction_type="schema",  # Type of extraction to perform
         instruction=(
-            "You are given filtered HTML from a product page, including elements for the product name (via provided selectors)"
+            "You are given filtered HTML from a product page.\n"
             " and anchors for downloadable technical documents and CAD files.\n"
-            "Extract technical PDFs, CAD files (STEP, IGES, DWG, DXF, STL), ZIP archives, EDZ files, and other downloadable assets. For each document, output: url, text, type, language, priority, productName.\n"            "For PDFs, we are searching for Data Sheet, Technical Drawing, Catalog, User Manual and info cards.\n"
+            "Extract technical PDFs, CAD files (STEP, IGES, DWG, DXF, STL), ZIP archives, EDZ files, and other downloadable assets. For each document, output: url, text, type, language, priority.\n"            
+            "For PDFs, we are searching for Data Sheet, Technical Drawing, Catalog, User Manual and info cards.\n"
             "if one file type has more than one language, return just one file with the most common language.\n"
-            "- productName: the exact product title text from the last selector, do not guess or infer the product name.\n"
-            "    - productName must be an English product name.\n"
             "- url: absolute link to the file. Convert relative links using the page domain.\n"
             "    - Do not add any escape characters to the url.\n"
             "- text: the link text or button text describing the file.\n"
@@ -1438,7 +1559,7 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             "- language: language code like EN/DE/TR or Unknown.\n"
             "- priority: High for Data Sheet/Technical Drawing/User Manual/CAD, Medium for Catalog/ZIP.\n"
             "Do not extract a list of contact files.\n"
-            "Ignore certificates/compliance-only links. Return a JSON array matching the schema. Ensure all entries use the same complete productName value."
+            "Ignore certificates/compliance-only links. Return a JSON array matching the schema."
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging

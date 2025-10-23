@@ -53,6 +53,161 @@ load_dotenv()
 
 log_callback = None
 
+# Global PDF tracker with asyncio-safe state management
+class PDFStatusTracker:
+    """
+    Thread-safe PDF status tracker for managing deduplication and cleaning state.
+    Uses asyncio primitives for safe concurrent access.
+    """
+    def __init__(self):
+        self._pdf_status_map = {}  # {pdf_id: status_dict}
+        self._lock = asyncio.Lock()  # Global lock for map modifications
+    
+    async def get_or_create_status(self, pdf_id: str, initial_path: str = None):
+        """
+        Get or create a status entry for a PDF.
+        Returns the status dict with its condition variable.
+        """
+        async with self._lock:
+            if pdf_id not in self._pdf_status_map:
+                self._pdf_status_map[pdf_id] = {
+                    'cleaned': False,
+                    'cleaned_path': initial_path,
+                    'original_path': initial_path,
+                    'pending_copy_paths': [],
+                    'condition': asyncio.Condition(),
+                    'cleaning_in_progress': False,
+                }
+            return self._pdf_status_map[pdf_id]
+    
+    async def mark_cleaning_started(self, pdf_id: str):
+        """Mark that cleaning has started for this PDF."""
+        async with self._lock:
+            if pdf_id in self._pdf_status_map:
+                self._pdf_status_map[pdf_id]['cleaning_in_progress'] = True
+    
+    async def mark_cleaned(self, pdf_id: str, cleaned_path: str):
+        """
+        Mark a PDF as cleaned and notify all waiting tasks.
+        Also process any pending copy operations.
+        """
+        status = await self.get_or_create_status(pdf_id)
+        async with status['condition']:
+            status['cleaned'] = True
+            status['cleaned_path'] = cleaned_path
+            status['cleaning_in_progress'] = False
+            
+            # Process pending copies
+            for target_path in status['pending_copy_paths']:
+                try:
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    shutil.copy2(cleaned_path, target_path)
+                    log_message(f"📋 Copied cleaned PDF to: {os.path.basename(target_path)}", "INFO")
+                except Exception as e:
+                    log_message(f"⚠️ Failed to copy cleaned PDF to {target_path}: {e}", "WARNING")
+            
+            # Clear pending copies
+            status['pending_copy_paths'].clear()
+            
+            # Notify all waiting tasks
+            status['condition'].notify_all()
+    
+    async def mark_cleaning_failed(self, pdf_id: str):
+        """Mark that cleaning failed for this PDF and notify waiters."""
+        status = await self.get_or_create_status(pdf_id)
+        async with status['condition']:
+            status['cleaning_in_progress'] = False
+            # Notify waiters so they don't hang forever
+            status['condition'].notify_all()
+    
+    async def wait_for_cleaned(self, pdf_id: str, target_path: str, timeout: float = 600):
+        """
+        Wait for a PDF to be cleaned, then copy it to target_path.
+        Returns True if successful, False if timeout or failure.
+        """
+        status = await self.get_or_create_status(pdf_id)
+        
+        try:
+            async with status['condition']:
+                # If already cleaned, copy immediately
+                if status['cleaned'] and status['cleaned_path']:
+                    try:
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        shutil.copy2(status['cleaned_path'], target_path)
+                        log_message(f"📋 Copied already-cleaned PDF to: {os.path.basename(target_path)}", "INFO")
+                        return True
+                    except Exception as e:
+                        log_message(f"⚠️ Failed to copy cleaned PDF: {e}", "WARNING")
+                        return False
+                
+                # Add to pending copies and wait
+                status['pending_copy_paths'].append(target_path)
+                log_message(f"⏳ Waiting for PDF cleaning to complete (timeout: {timeout}s)...", "INFO")
+                
+                # Wait with timeout
+                try:
+                    await asyncio.wait_for(
+                        status['condition'].wait_for(lambda: status['cleaned'] or not status['cleaning_in_progress']),
+                        timeout=timeout
+                    )
+                    
+                    # Check if cleaning succeeded
+                    if status['cleaned']:
+                        return True
+                    else:
+                        log_message(f"⚠️ PDF cleaning failed or was cancelled", "WARNING")
+                        # Remove from pending since it won't be copied
+                        if target_path in status['pending_copy_paths']:
+                            status['pending_copy_paths'].remove(target_path)
+                        return False
+                        
+                except asyncio.TimeoutError:
+                    log_message(f"⏱️ Timeout waiting for PDF cleaning", "WARNING")
+                    # Remove from pending
+                    if target_path in status['pending_copy_paths']:
+                        status['pending_copy_paths'].remove(target_path)
+                    return False
+                    
+        except Exception as e:
+            log_message(f"❌ Error waiting for cleaned PDF: {e}", "ERROR")
+            return False
+    
+    async def cleanup_unfinished(self):
+        """
+        Clean up any PDFs that were never cleaned successfully.
+        Call this at the end of category processing.
+        """
+        async with self._lock:
+            for pdf_id, status in list(self._pdf_status_map.items()):
+                if not status['cleaned'] and status['original_path']:
+                    try:
+                        if os.path.exists(status['original_path']):
+                            log_message(f"🗑️ Removing uncleaned PDF: {os.path.basename(status['original_path'])}", "INFO")
+                            # Note: We keep the original file for now, just log
+                    except Exception as e:
+                        log_message(f"⚠️ Error during cleanup: {e}", "WARNING")
+                
+                # Log any pending copies that never completed
+                if status['pending_copy_paths']:
+                    log_message(f"⚠️ PDF had {len(status['pending_copy_paths'])} pending copies that were never completed", "WARNING")
+    
+    async def get_stats(self):
+        """Get statistics about tracked PDFs."""
+        async with self._lock:
+            total = len(self._pdf_status_map)
+            cleaned = sum(1 for s in self._pdf_status_map.values() if s['cleaned'])
+            in_progress = sum(1 for s in self._pdf_status_map.values() if s['cleaning_in_progress'])
+            pending = sum(len(s['pending_copy_paths']) for s in self._pdf_status_map.values())
+            return {
+                'total_pdfs': total,
+                'cleaned': cleaned,
+                'in_progress': in_progress,
+                'pending_copies': pending
+            }
+
+# Global instance
+_pdf_tracker = PDFStatusTracker()
+
 def set_log_callback(callback):
     """Set the logging callback function for web interface integration"""
     global log_callback
@@ -954,14 +1109,38 @@ async def download_pdf_links(
                             filename = filename.replace('\\', '_').replace('/', '_')
                             save_path = os.path.join(productPath, filename)
                             
-                            # Copy the previously processed file to current product folder with new filename
-                            shutil.copy2(previous_path, save_path)
-                            log_message(f"📋 Copied previously downloaded {file_type_label}: {filename}", "INFO")
-                            saved_files.append(save_path)
-                            # mark datasheet if type matches
-                            if file_type and ('data sheet' in file_type.lower() or 'datasheet' in file_type.lower() or 'specification' in file_type.lower()):
-                                has_datasheet = True
-                            continue
+                            # For PDFs, check if cleaned before copying
+                            if is_pdf:
+                                pdf_id = file_url  # Use URL as unique identifier
+                                status = await _pdf_tracker.get_or_create_status(pdf_id, previous_path)
+                                
+                                # If already cleaned, copy immediately
+                                if status['cleaned'] and status['cleaned_path']:
+                                    shutil.copy2(status['cleaned_path'], save_path)
+                                    log_message(f"📋 Copied previously cleaned PDF: {filename}", "INFO")
+                                    saved_files.append(save_path)
+                                    if file_type and ('data sheet' in file_type.lower() or 'datasheet' in file_type.lower() or 'specification' in file_type.lower()):
+                                        has_datasheet = True
+                                    continue
+                                else:
+                                    # PDF not yet cleaned, wait for it
+                                    log_message(f"⏳ PDF exists but not cleaned yet, will wait: {filename}", "INFO")
+                                    wait_success = await _pdf_tracker.wait_for_cleaned(pdf_id, save_path, timeout=600)
+                                    if wait_success:
+                                        saved_files.append(save_path)
+                                        if file_type and ('data sheet' in file_type.lower() or 'datasheet' in file_type.lower() or 'specification' in file_type.lower()):
+                                            has_datasheet = True
+                                        continue
+                                    else:
+                                        log_message(f"⚠️ Failed to get cleaned PDF, will re-download: {file_url}", "WARNING")
+                            else:
+                                # Non-PDF files, copy directly
+                                shutil.copy2(previous_path, save_path)
+                                log_message(f"📋 Copied previously downloaded {file_type_label}: {filename}", "INFO")
+                                saved_files.append(save_path)
+                                if file_type and ('data sheet' in file_type.lower() or 'datasheet' in file_type.lower() or 'specification' in file_type.lower()):
+                                    has_datasheet = True
+                                continue
                         except Exception as copy_error:
                             log_message(f"⚠️ Failed to copy file: {str(copy_error)}", "WARNING")
                             log_message(f"   Will re-download and process: {file_url}", "INFO")
@@ -1079,7 +1258,11 @@ async def download_pdf_links(
 
                             # Collect PDFs for parallel processing later
                             if is_pdf:
-                                pdfs_to_clean.append(save_path)
+                                pdfs_to_clean.append((save_path, file_url))  # Store both path and URL
+                                # Register PDF with tracker and mark as cleaning in progress
+                                pdf_id = file_url
+                                await _pdf_tracker.get_or_create_status(pdf_id, save_path)
+                                await _pdf_tracker.mark_cleaning_started(pdf_id)
                                 log_message(f"✅ Downloaded PDF (queued for cleaning): {os.path.basename(save_path)}", "INFO")
                             else:
                                 log_message(f"✅ Saved {file_type_label}: {os.path.basename(save_path)}", "INFO")
@@ -1109,12 +1292,18 @@ async def download_pdf_links(
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all PDF processing tasks
                 future_to_pdf = {}
-                for pdf_path in pdfs_to_clean:
+                for pdf_info in pdfs_to_clean:
+                    if isinstance(pdf_info, tuple):
+                        pdf_path, pdf_url = pdf_info
+                    else:
+                        # Backwards compatibility
+                        pdf_path = pdf_info
+                        pdf_url = pdf_path
                     future = executor.submit(_process_pdf_wrapper, pdf_path, api_key)
-                    future_to_pdf[future] = pdf_path
+                    future_to_pdf[future] = (pdf_path, pdf_url)
                 
                 # Wait for results with timeout handling
-                for future, pdf_path in future_to_pdf.items():
+                for future, (pdf_path, pdf_url) in future_to_pdf.items():
                     pdf_name = os.path.basename(pdf_path)
                     try:
                         # Wait for the result with timeout
@@ -1126,11 +1315,17 @@ async def download_pdf_links(
                         if result['success']:
                             successful_pdfs.append(pdf_path)
                             log_message(f"✨ PDF cleaning completed: {pdf_name}", "INFO")
+                            # Notify tracker that PDF is cleaned
+                            pdf_id = pdf_url
+                            await _pdf_tracker.mark_cleaned(pdf_id, pdf_path)
                         else:
                             failed_pdfs.append(pdf_path)
                             error_msg = result.get('error', 'Unknown error')
                             log_message(f"❌ PDF cleaning failed for {pdf_name}: {error_msg}", "ERROR")
                             _cleanup_failed_pdf(pdf_path, log_message)
+                            # Notify tracker of failure
+                            pdf_id = pdf_url
+                            await _pdf_tracker.mark_cleaning_failed(pdf_id)
                             # Remove from saved_files list
                             if pdf_path in saved_files:
                                 saved_files.remove(pdf_path)
@@ -1140,6 +1335,9 @@ async def download_pdf_links(
                         log_message(f"⏱️ PDF cleaning timeout ({PDF_TIMEOUT}s) for {pdf_name}", "ERROR")
                         log_message(f"🗑️ Removing hung PDF: {pdf_name}", "WARNING")
                         _cleanup_failed_pdf(pdf_path, log_message)
+                        # Notify tracker of failure
+                        pdf_id = pdf_url
+                        await _pdf_tracker.mark_cleaning_failed(pdf_id)
                         # Remove from saved_files list
                         if pdf_path in saved_files:
                             saved_files.remove(pdf_path)
@@ -1148,6 +1346,9 @@ async def download_pdf_links(
                         failed_pdfs.append(pdf_path)
                         log_message(f"❌ Unexpected error cleaning {pdf_name}: {str(e)}", "ERROR")
                         _cleanup_failed_pdf(pdf_path, log_message)
+                        # Notify tracker of failure
+                        pdf_id = pdf_url
+                        await _pdf_tracker.mark_cleaning_failed(pdf_id)
                         # Remove from saved_files list
                         if pdf_path in saved_files:
                             saved_files.remove(pdf_path)

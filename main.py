@@ -21,7 +21,7 @@ from crawl4ai import AsyncWebCrawler
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 
-from utils.scraper_utils import download_pdf_links, set_log_callback as set_scraper_log_callback
+from utils.scraper_utils import download_pdf_links, set_log_callback as set_scraper_log_callback, _pdf_tracker
 from config import REQUIRED_KEYS
 from utils.scraper_utils import (
     fetch_and_process_page,
@@ -81,7 +81,7 @@ def read_sites_from_csv(input_file):
 
 async def cleanup_crawler_session(crawler, session_id):
     """
-    Clean up crawler session to prevent resource leaks.
+    Clean up crawler session to prevent resource leaks
     
     Args:
         crawler: AsyncWebCrawler instance
@@ -93,6 +93,78 @@ async def cleanup_crawler_session(crawler, session_id):
         log_message(f"🧹 Cleaned up session: {session_id}", "INFO")
     except Exception as e:
         log_message(f"⚠️ Session cleanup warning: {str(e)}", "WARNING")
+
+async def process_single_product(
+    venue: dict,
+    site: dict,
+    browser_config,
+    pdf_llm_strategy,
+    regex_strategy,
+    api_key: str,
+    session_id: str,
+    domain_name: str,
+    semaphore: asyncio.Semaphore,
+    stop_requested_callback=None
+):
+    """
+    Process a single product: download and clean PDFs.
+    Uses a semaphore to limit concurrency and avoid overwhelming servers.
+    
+    Args:
+        venue: Product information dict
+        site: Site configuration dict
+        browser_config: Browser configuration
+        pdf_llm_strategy: PDF LLM strategy
+        regex_strategy: Regex strategy
+        api_key: API key for services
+        session_id: Base session ID
+        domain_name: Domain name
+        semaphore: Asyncio semaphore for rate limiting
+        stop_requested_callback: Callback to check if stop is requested
+        
+    Returns:
+        Summary dict or None if failed/stopped
+    """
+    async with semaphore:  # Control concurrency
+        if stop_requested_callback and stop_requested_callback():
+            log_message("Stop requested by user.", "WARNING")
+            return None
+        
+        # Create dedicated crawler for this product
+        async with AsyncWebCrawler(config=browser_config) as product_crawler:
+            venue_session_id = f"{session_id}_{hash(venue['productLink'])}"
+            log_message(f"📥 Processing product page for PDFs: {venue['productLink']}", "INFO")
+            
+            try:
+                # Add random delay to be polite to servers
+                await asyncio.sleep(random.uniform(5, 15))
+                
+                summary = await download_pdf_links(
+                    product_crawler,
+                    product_url=venue["productLink"],
+                    output_folder="output",
+                    pdf_selector=site["pdf_selector"],
+                    session_id=venue_session_id,
+                    regex_strategy=regex_strategy,
+                    domain_name=domain_name,
+                    pdf_llm_strategy=pdf_llm_strategy,
+                    api_key=api_key,
+                    cat_name=site["cat_name"],
+                )
+                
+                if summary:
+                    return {
+                        "productLink": summary.get("productLink"),
+                        "productName": summary.get("productName"),
+                        "category": summary.get("category"),
+                        "saved_count": summary.get("saved_count", 0),
+                        "has_datasheet": summary.get("has_datasheet", False),
+                    }
+                return None
+                
+            except Exception as pdf_error:
+                log_message(f"❌ PDF processing failed for {venue.get('productName', 'Unknown')}: {str(pdf_error)}", "ERROR")
+                return None
 
 async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str = "groq/llama-3.1-8b-instant", 
                               status_callback=None, stop_requested_callback=None):
@@ -117,13 +189,14 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     category_to_products = {}
     seen_links = set()
     
-    # PDF crawler management
-    pdf_crawler = None
-    products_processed_with_pdf_crawler = 0
-    MAX_PRODUCTS_PER_PDF_CRAWLER = 10  # Restart PDF crawler every 10 products
+    # Concurrency control: limit parallel product processing
+    # With 64GB RAM, we can handle 16-24 concurrent products safely
+    MAX_CONCURRENT_PRODUCTS = 20
+    product_semaphore = asyncio.Semaphore(MAX_CONCURRENT_PRODUCTS)
 
     sites = read_sites_from_csv(input_file)
     log_message(f"Loaded {len(sites)} sites to crawl.", "INFO")
+    log_message(f"🔧 Configured for up to {MAX_CONCURRENT_PRODUCTS} concurrent product processing tasks", "INFO")
 
     # Update status for web interface
     if status_callback:
@@ -210,55 +283,51 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                             log_message(f"🏁 Stopping pagination - no more results on page {page_number}", "INFO")
                             break
                         
+                        # Process products in parallel with controlled concurrency
+                        if stop_requested_callback and stop_requested_callback():
+                            log_message("Stop requested by user.", "WARNING")
+                            break
                         
-                        for venue in venues:
-                            # Check if stop is requested
-                            if stop_requested_callback and stop_requested_callback():
-                                log_message("Stop requested by user.", "WARNING")
-                                break
+                        log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
+                        
+                        BATCH_SIZE = 20  # Configurable: how many products to launch per batch
+                        total_products = len(venues)
+                        product_idx = 0
+                        batch_num = 1
+                        while product_idx < total_products:
+                            batch_venues = venues[product_idx : product_idx + BATCH_SIZE]
+                            log_message(f"⚡ Processing batch {batch_num} ({len(batch_venues)} products)", "INFO")
 
-                            # Initialize or restart PDF crawler if needed
-                            if pdf_crawler is None or products_processed_with_pdf_crawler >= MAX_PRODUCTS_PER_PDF_CRAWLER:
-                                if pdf_crawler is not None:
-                                    log_message("🔄 Restarting PDF crawler to prevent resource exhaustion", "INFO")
-                                    await pdf_crawler.close()
-                                    await asyncio.sleep(2)  # Brief pause to ensure cleanup
-                                
-                                pdf_crawler = AsyncWebCrawler(config=browser_config)
-                                await pdf_crawler.start()
-                                products_processed_with_pdf_crawler = 0
-                                log_message("🚀 Fresh PDF crawler instance started", "INFO")
-
-                            await asyncio.sleep(random.uniform(10, 25))
-                            venue_session_id = f"{session_id}_{hash(venue['productLink'])}"
-                            log_message(f"📥 Processing product page for PDFs: {venue['productLink']}", "INFO")
-                            
-                            try:
-                                summary = await download_pdf_links(
-                                    pdf_crawler,  # Use dedicated PDF crawler
-                                    product_url=venue["productLink"],
-                                    output_folder="output",
-                                    pdf_selector=site["pdf_selector"],  # Add pdf_selector from CSV
-                                    session_id=venue_session_id,
-                                    regex_strategy=regex_strategy,
-                                    domain_name=domain_name,
+                            product_tasks = [
+                                process_single_product(
+                                    venue=venue,
+                                    site=site,
+                                    browser_config=browser_config,
                                     pdf_llm_strategy=pdf_llm_strategy,
+                                    regex_strategy=regex_strategy,
                                     api_key=api_key,
-                                    cat_name=site["cat_name"],  # Add category name for folder organization
+                                    session_id=session_id,
+                                    domain_name=domain_name,
+                                    semaphore=product_semaphore,
+                                    stop_requested_callback=stop_requested_callback
                                 )
-                                if summary:
-                                    cat_summaries.append({
-                                        "productLink": summary.get("productLink"),
-                                        "productName": summary.get("productName"),
-                                        "category": summary.get("category"),
-                                        "saved_count": summary.get("saved_count", 0),
-                                        "has_datasheet": summary.get("has_datasheet", False),
-                                    })
-                                products_processed_with_pdf_crawler += 1
-                                
-                            except Exception as pdf_error:
-                                log_message(f"❌ PDF processing failed for {venue['productName']}: {str(pdf_error)}", "ERROR")
-                                # Don't increment counter on failure, but continue processing
+                                for venue in batch_venues
+                            ]
+
+                            summaries = await asyncio.gather(*product_tasks, return_exceptions=True)
+                            for summary in summaries:
+                                if isinstance(summary, Exception):
+                                    log_message(f"❌ Product processing raised exception: {str(summary)}", "ERROR")
+                                elif summary:
+                                    cat_summaries.append(summary)
+
+                            log_message(f"✅ Completed batch {batch_num} ({product_idx+BATCH_SIZE if product_idx+BATCH_SIZE < total_products else total_products}/{total_products} products)", "INFO")
+                            product_idx += BATCH_SIZE
+                            batch_num += 1
+                            if product_idx < total_products:
+                                await asyncio.sleep(5)  # Brief pause between batches
+                        
+                        log_message(f"✅ Completed all batches for {len(venues)} products", "INFO")
 
                         # Tag venues with category and collect for CSV export
                         for v in venues:
@@ -293,8 +362,16 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         await crawler.start()
                         log_message("🚀 Fresh Crawler instance started", "INFO")
 
-        # After finishing each site/category, write per-category CSV
+        # After finishing each site/category, cleanup and write per-category CSV
                 try:
+                    # Cleanup unfinished PDFs for this category
+                    log_message("🧹 Cleaning up unfinished PDFs for category...", "INFO")
+                    await _pdf_tracker.cleanup_unfinished()
+                    
+                    # Get and log tracker statistics
+                    stats = await _pdf_tracker.get_stats()
+                    log_message(f"📊 PDF Tracker Stats: {stats['total_pdfs']} total, {stats['cleaned']} cleaned, {stats['in_progress']} in progress, {stats['pending_copies']} pending copies", "INFO")
+                    
                     if cat_summaries:
                         os.makedirs("CSVS", exist_ok=True)
                         from datetime import datetime
@@ -311,10 +388,11 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                     log_message(f"⚠️ Failed to write category summary CSV: {e}", "WARNING")
 
     finally:
-        # Ensure PDF crawler is properly closed
-        if pdf_crawler is not None:
-            await pdf_crawler.close()
-            log_message("🚪 PDF crawler properly closed", "INFO")
+        # Final cleanup
+        log_message("🧹 Final cleanup of PDF tracker...", "INFO")
+        await _pdf_tracker.cleanup_unfinished()
+        final_stats = await _pdf_tracker.get_stats()
+        log_message(f"📊 Final PDF Tracker Stats: {final_stats}", "INFO")
 
     log_message(f"PDF LLM strategy usage: {pdf_llm_strategy.show_usage()}", "INFO")
     log_message(f"LLM strategy usage: {llm_strategy.show_usage()}", "INFO")

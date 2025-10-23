@@ -48,11 +48,15 @@ The **AI Web Crawler** is a sophisticated, production-ready system that combines
 - **AI Content Cleaning**: Removes contact information, QR codes, and unwanted content
 - **Smart Organization**: Organizes PDFs by product name and category
 - **Background Estimation**: Intelligent background color detection for seamless removal
+- **Parallel Processing**: Concurrent PDF cleaning with intelligent deduplication
+- **Safe Deduplication**: Only copies cleaned PDFs to avoid distributing unprocessed files
 - **Cover Page Integration**: Automatically adds custom cover pages
 
 ### **Enterprise Features**
 - **Web Interface**: Modern Flask-based dashboard with real-time monitoring
 - **Desktop GUI**: Tkinter-based application for offline use
+- **Scalable Architecture**: Supports up to 20 concurrent product processing tasks
+- **Resource Management**: Optimized for 64 GB RAM servers with intelligent memory handling
 - **Command Line**: Full automation support for batch processing
 - **Security**: Optional password protection and secure file handling
 - **Archiving**: Automatic compression and archiving of results
@@ -239,6 +243,20 @@ CSVS/
 
 ---
 
+## 📚 Documentation
+
+For detailed information, see:
+
+- **[Architecture Guide](docs/ARCHITECTURE.md)** - System design and components
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Advanced configuration options
+- **[User Guide](docs/USER_GUIDE.md)** - Step-by-step usage instructions
+- **[Developer Guide](docs/DEVELOPER_GUIDE.md)** - Development and contribution guide
+- **[API Reference](docs/API_REFERENCE.md)** - Function and class documentation
+- **[Parallel Processing Architecture](docs/PARALLEL_PROCESSING_ARCHITECTURE.md)** - Concurrent processing and PDF deduplication
+- **[PDF Button Selector Integration](docs/PDF_BUTTON_SELECTOR_INTEGRATION_PLAN.md)** - Handling dynamic PDF downloads
+
+---
+
 ## 🔧 Configuration
 
 ### **Advanced Settings**
@@ -322,13 +340,17 @@ def get_browser_config() -> BrowserConfig:
 - **Session Management**: Efficient browser session handling
 - **Memory Management**: Automatic cleanup and garbage collection
 - **Duplicate Prevention**: Smart caching to avoid redundant processing
+- **Parallel Product Processing**: Up to 20 concurrent products (configurable)
+- **Safe PDF Deduplication**: Waits for cleaning before copying duplicates
 
 ### **Scaling Considerations**
 
-- **Concurrent Processing**: Multiple crawler instances
-- **Resource Management**: Configurable memory and CPU limits
+- **Concurrent Processing**: Asyncio-based parallel product processing
+- **Resource Management**: Configurable memory and CPU limits (optimized for 64 GB RAM)
 - **Error Recovery**: Graceful handling of network issues
 - **Progress Tracking**: Real-time status monitoring
+- **Deadlock Prevention**: Timeout-based waits and proper cleanup
+- **API Cost Optimization**: Intelligent deduplication reduces LLM API calls
 
 ---
 

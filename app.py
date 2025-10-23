@@ -633,6 +633,92 @@ def delete_item():
     except Exception as e:
         return jsonify({'error': f'Error deleting item: {str(e)}'}), 500
 
+@app.route('/product_count')
+def get_product_count():
+    """Get the count of products in the output folder"""
+    try:
+        output_folder = "output"
+        if not os.path.exists(output_folder):
+            return jsonify({
+                'total_products': 0,
+                'total_categories': 0,
+                'total_files': 0
+            })
+        
+        total_products = 0
+        total_categories = 0
+        total_files = 0
+        
+        # Count categories (directories in output folder)
+        for item in os.listdir(output_folder):
+            item_path = os.path.join(output_folder, item)
+            if os.path.isdir(item_path):
+                total_categories += 1
+                # Count products (subdirectories within each category)
+                try:
+                    for product in os.listdir(item_path):
+                        product_path = os.path.join(item_path, product)
+                        if os.path.isdir(product_path):
+                            total_products += 1
+                            # Count files within each product
+                            try:
+                                for file in os.listdir(product_path):
+                                    file_path = os.path.join(product_path, file)
+                                    if os.path.isfile(file_path):
+                                        total_files += 1
+                            except (OSError, PermissionError):
+                                pass
+                except (OSError, PermissionError):
+                    pass
+        
+        return jsonify({
+            'total_products': total_products,
+            'total_categories': total_categories,
+            'total_files': total_files
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+@app.route('/category_names')
+def get_category_names():
+    """Get the list of category names in the output folder"""
+    try:
+        output_folder = "output"
+        if not os.path.exists(output_folder):
+            return jsonify({
+                'categories': [],
+                'message': 'No output folder found'
+            })
+        
+        categories = []
+        for item in os.listdir(output_folder):
+            item_path = os.path.join(output_folder, item)
+            if os.path.isdir(item_path):
+                # Count products in this category
+                product_count = 0
+                try:
+                    for product in os.listdir(item_path):
+                        product_path = os.path.join(item_path, product)
+                        if os.path.isdir(product_path):
+                            product_count += 1
+                except (OSError, PermissionError):
+                    pass
+                
+                categories.append({
+                    'name': item,
+                    'product_count': product_count
+                })
+        
+        # Sort categories by name
+        categories.sort(key=lambda x: x['name'])
+        
+        return jsonify({
+            'categories': categories,
+            'total_categories': len(categories)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
 @app.route('/server-info')
 def server_info():
     """Display server information"""

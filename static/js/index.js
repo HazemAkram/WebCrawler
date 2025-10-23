@@ -2,6 +2,7 @@
 let uploadedFile = null;
 let statusInterval = null;
 let isRunning = false;
+let outputStatsInterval = null;
 
 // File upload handling
 const fileUploadArea = document.getElementById('fileUploadArea');
@@ -150,6 +151,8 @@ function startStatusPolling() {
                     updateStatus('stopped');
                     clearInterval(statusInterval);
                     addLog('Crawling process finished', 'info');
+                    // Refresh output statistics when crawling completes
+                    loadOutputStats();
                 }
             })
             .catch(() => { });
@@ -260,11 +263,120 @@ function showAlert(message, type) {
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
   `;
     document.querySelector('.content').insertBefore(alertDiv, document.querySelector('.content').firstChild);
-    setTimeout(() => { if (alertDiv.parentNode) alertDiv.remove(); }, 5000);
+    
+    // Auto-dismiss after 8 seconds for info alerts (categories), 5 seconds for others
+    const dismissTime = type === 'info' ? 8000 : 5000;
+    setTimeout(() => { if (alertDiv.parentNode) alertDiv.remove(); }, dismissTime);
 }
 
 function downloadOutput() { window.open('/download_output', '_blank'); }
 
-document.addEventListener('DOMContentLoaded', function () { updateStatus('idle'); });
+// Load output statistics
+function loadOutputStats() {
+    const refreshBtn = document.querySelector('button[onclick="loadOutputStats()"]');
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+    }
+    
+    fetch('/product_count')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error loading output stats:', data.error);
+                showAlert('Error loading output statistics: ' + data.error, 'danger');
+                return;
+            }
+            
+            document.getElementById('outputProducts').textContent = data.total_products || 0;
+            document.getElementById('outputCategories').textContent = data.total_categories || 0;
+            document.getElementById('outputFiles').textContent = data.total_files || 0;
+        })
+        .catch(error => {
+            console.error('Error fetching output stats:', error);
+            showAlert('Error fetching output statistics: ' + error.message, 'danger');
+        })
+        .finally(() => {
+            if (refreshBtn) {
+                refreshBtn.disabled = false;
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+            }
+        });
+}
+
+// Show categories
+function showCategories() {
+    const categoriesBtn = document.querySelector('button[onclick="showCategories()"]');
+    if (categoriesBtn) {
+        categoriesBtn.disabled = true;
+        categoriesBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+    }
+    
+    fetch('/category_names')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error loading categories:', data.error);
+                showAlert('Error loading categories: ' + data.error, 'danger');
+                return;
+            }
+            
+            if (data.categories && data.categories.length > 0) {
+                let categoriesHtml = `
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-list"></i> Categories in Output Folder (${data.total_categories} total):</h6>
+                        <div class="row">
+                `;
+                
+                data.categories.forEach(category => {
+                    categoriesHtml += `
+                        <div class="col-md-6 mb-2">
+                            <div class="d-flex justify-content-between align-items-center p-2 bg-light rounded">
+                                <span><strong>${category.name}</strong></span>
+                                <span class="badge bg-primary">${category.product_count} products</span>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                categoriesHtml += '</div></div>';
+                showAlert(categoriesHtml, 'info');
+            } else {
+                showAlert('No categories found in output folder.', 'warning');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching categories:', error);
+            showAlert('Error fetching categories: ' + error.message, 'danger');
+        })
+        .finally(() => {
+            if (categoriesBtn) {
+                categoriesBtn.disabled = false;
+                categoriesBtn.innerHTML = '<i class="fas fa-list"></i> Show Categories';
+            }
+        });
+}
+
+// Start output statistics polling
+function startOutputStatsPolling() {
+    if (outputStatsInterval) clearInterval(outputStatsInterval);
+    // Load immediately
+    loadOutputStats();
+    // Then poll every 10 seconds
+    outputStatsInterval = setInterval(loadOutputStats, 10000);
+}
+
+// Stop output statistics polling
+function stopOutputStatsPolling() {
+    if (outputStatsInterval) {
+        clearInterval(outputStatsInterval);
+        outputStatsInterval = null;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () { 
+    updateStatus('idle'); 
+    startOutputStatsPolling();
+});
 
 

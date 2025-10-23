@@ -28,6 +28,45 @@ See NOTICE file for additional terms and conditions.
 
             <!-- Main Content -->
             <div class="content">
+                <!-- Output Statistics Section -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="fas fa-folder-open"></i> Output Statistics
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary me-2" onclick="loadOutputStats()">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                            <button class="btn btn-sm btn-outline-info" onclick="showCategories()">
+                                <i class="fas fa-list"></i> Show Categories
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="stats-card">
+                                    <div class="stats-number" id="outputProducts">0</div>
+                                    <div class="stats-label">Products in Output</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stats-card">
+                                    <div class="stats-number" id="outputCategories">0</div>
+                                    <div class="stats-label">Categories</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="stats-card">
+                                    <div class="stats-number" id="outputFiles">0</div>
+                                    <div class="stats-label">Total Files</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- File Upload Section -->
                 <div class="card">
                     <div class="card-header">
@@ -161,6 +200,7 @@ See NOTICE file for additional terms and conditions.
                         </div>
                     </div>
                 </div>
+
 
                 <!-- Logs Section -->
                 <div class="card">

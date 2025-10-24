@@ -1754,7 +1754,7 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             "For each document, output: url, text, type, language, priority.\n"
             "- url: absolute link to the file. Convert relative links using the page domain.\n"
             "    - Do not add any escape characters to the url.\n"
-            "- text: the link text or button text describing the file.\n"
+            "- text: the link text, button text describing the file or file name.\n"
             "- type: one of Data Sheet, Installation Guide, Technical Drawing, User Manual, Catalog, CAD, ZIP, EDZ, STEP, STP, IGES, DWG, DXF, STL, or Generic.\n"
             "    - For any file labeled with install/installing/setup/commissioning/mounting/start/assembly, use type 'Installation Guide' if the document's main focus is installation or mounting.\n"
             "    - If any file could match both Installation Guide and User Manual, prefer Installation Guide as the type.\n"
@@ -1833,6 +1833,8 @@ async def fetch_and_process_page(
         log_message(f"No products found on page {page_number}.", "INFO")
         return [], False
 
+    # with open("extracted_data.json", "w", encoding="utf-8") as f:
+    #     json.dump(extracted_data, f, ensure_ascii=False, indent=4)
     
     # Process product
     complete_venues = []

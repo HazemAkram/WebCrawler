@@ -1281,7 +1281,7 @@ async def download_pdf_links(
             log_message(f"🔧 Using {max_workers} parallel workers for PDF cleaning", "INFO")
             
             # Timeout per PDF: 5 minutes (300 seconds)
-            PDF_TIMEOUT = 300
+            PDF_TIMEOUT = 500
             
             # Track successful and failed PDFs
             successful_pdfs = []

@@ -353,9 +353,18 @@ def download_output():
             archive_name = f"{timestamp}.tar.gz"
             archive_path = os.path.join(archives_dir, archive_name)
 
-            # Build tar.gz archive without loading into memory
+            # Build tar.gz archive with flattened structure
             with tarfile.open(archive_path, "w:gz") as tar:
-                tar.add(output_folder, arcname=os.path.basename(output_folder))
+                # Add each product directory directly under output/
+                for category_name in os.listdir(output_folder):
+                    category_path = os.path.join(output_folder, category_name)
+                    if os.path.isdir(category_path):
+                        # Add each product in this category directly under output/
+                        for product_name in os.listdir(category_path):
+                            product_path = os.path.join(category_path, product_name)
+                            if os.path.isdir(product_path):
+                                # Set arcname to flatten: output/ProductName instead of output/Category/ProductName
+                                tar.add(product_path, arcname=f"output/{product_name}")
 
             # Return a short JSON containing a stable URL and absolute path for server-to-server fetches
             return jsonify({

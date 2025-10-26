@@ -59,6 +59,8 @@ DEFAULT_CONFIG = {
             "Data Sheet": 1,
             "Technical Drawing": 2,
             "User Manual": 1,
+            "Installation Guide": 1,
+            "User guide": 1,
             "CAD": 4,
             "ZIP": 2,
             "Catalog": 1,

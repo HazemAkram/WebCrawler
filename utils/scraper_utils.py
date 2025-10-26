@@ -966,6 +966,9 @@ async def download_pdf_links(
         per_type_limits = {k.lower(): v for k, v in (pdf_cfg.get("per_type_limits", {}) or {}).items()}
         per_type_counts: dict[str, int] = {}
 
+        # with open("extracted_data.json", "w", encoding="utf-8") as f:
+        #     json.dump(extracted_data, f, ensure_ascii=False, indent=4)
+
         for item in extracted_data:
             file_url = item.get('url', '')
             
@@ -1277,7 +1280,7 @@ async def download_pdf_links(
             
             # Determine worker count: use CPU count / 2, but at least 1 and at most 4
             cpu_count = multiprocessing.cpu_count()
-            max_workers = max(1, min(cpu_count // 2, 4))
+            max_workers = 1
             log_message(f"🔧 Using {max_workers} parallel workers for PDF cleaning", "INFO")
             
             # Timeout per PDF: 5 minutes (300 seconds)

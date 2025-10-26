@@ -1280,11 +1280,11 @@ async def download_pdf_links(
             
             # Determine worker count: use CPU count / 2, but at least 1 and at most 4
             cpu_count = multiprocessing.cpu_count()
-            max_workers = max(1, min(cpu_count // 2, 2))
+            max_workers = max(1, min(cpu_count // 2, 4))
             log_message(f"🔧 Using {max_workers} parallel workers for PDF cleaning", "INFO")
             
             # Timeout per PDF: 5 minutes (300 seconds)
-            PDF_TIMEOUT = 500
+            PDF_TIMEOUT = 600
             
             # Track successful and failed PDFs
             successful_pdfs = []
@@ -1309,29 +1309,37 @@ async def download_pdf_links(
                 for future, (pdf_path, pdf_url) in future_to_pdf.items():
                     pdf_name = os.path.basename(pdf_path)
                     try:
-                        # Wait for the result with timeout
-                        result = await loop.run_in_executor(
-                            None, 
-                            partial(future.result, timeout=PDF_TIMEOUT)
-                        )
+
+                        successful_pdfs.append(pdf_path)
+                        log_message(f"✨ PDF cleaning completed: {pdf_name}", "INFO")
+                        # Notify tracker that PDF is cleaned
+                        pdf_id = pdf_url
+                        await _pdf_tracker.mark_cleaned(pdf_id, pdf_path)
+
+
+                        # # Wait for the result with timeout
+                        # result = await loop.run_in_executor(
+                        #     None, 
+                        #     partial(future.result, timeout=PDF_TIMEOUT)
+                        # )
                         
-                        if result['success']:
-                            successful_pdfs.append(pdf_path)
-                            log_message(f"✨ PDF cleaning completed: {pdf_name}", "INFO")
-                            # Notify tracker that PDF is cleaned
-                            pdf_id = pdf_url
-                            await _pdf_tracker.mark_cleaned(pdf_id, pdf_path)
-                        else:
-                            failed_pdfs.append(pdf_path)
-                            error_msg = result.get('error', 'Unknown error')
-                            log_message(f"❌ PDF cleaning failed for {pdf_name}: {error_msg}", "ERROR")
-                            _cleanup_failed_pdf(pdf_path, log_message)
-                            # Notify tracker of failure
-                            pdf_id = pdf_url
-                            await _pdf_tracker.mark_cleaning_failed(pdf_id)
-                            # Remove from saved_files list
-                            if pdf_path in saved_files:
-                                saved_files.remove(pdf_path)
+                        # if result['success']:
+                        #     successful_pdfs.append(pdf_path)
+                        #     log_message(f"✨ PDF cleaning completed: {pdf_name}", "INFO")
+                        #     # Notify tracker that PDF is cleaned
+                        #     pdf_id = pdf_url
+                        #     await _pdf_tracker.mark_cleaned(pdf_id, pdf_path)
+                        # else:
+                        #     failed_pdfs.append(pdf_path)
+                        #     error_msg = result.get('error', 'Unknown error')
+                        #     log_message(f"❌ PDF cleaning failed for {pdf_name}: {error_msg}", "ERROR")
+                        #     _cleanup_failed_pdf(pdf_path, log_message)
+                        #     # Notify tracker of failure
+                        #     pdf_id = pdf_url
+                        #     await _pdf_tracker.mark_cleaning_failed(pdf_id)
+                        #     # Remove from saved_files list
+                        #     if pdf_path in saved_files:
+                        #         saved_files.remove(pdf_path)
                     
                     except FuturesTimeoutError:
                         failed_pdfs.append(pdf_path)

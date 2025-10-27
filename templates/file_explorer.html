@@ -41,12 +41,21 @@ See NOTICE file for additional terms and conditions.
                         {% endif %}
                     </div>
                     <div class="col-md-6 text-end">
+                        {% if current_path == 'output' %}
+                        <button class="btn btn-danger me-2" onclick="deleteAllItems()">
+                            <i class="fas fa-trash"></i> Delete All
+                        </button>
+                        <button class="btn btn-primary" id="compressBtn" onclick="compressSelected()" disabled>
+                            <i class="fas fa-archive"></i> Compress Selected Categories
+                        </button>
+                        {% else %}
                         <button class="btn btn-danger me-2" onclick="deleteAllItems()">
                             <i class="fas fa-trash"></i> Delete All
                         </button>
                         <a href="/download_output" class="btn btn-primary">
                             <i class="fas fa-download"></i> Download All as ZIP
                         </a>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -117,7 +126,13 @@ See NOTICE file for additional terms and conditions.
                     <table class="table table-hover">
                         <thead>
                             <tr>
+                                {% if current_path == 'output' %}
+                                <th style="width: 50px;">
+                                    <input type="checkbox" id="selectAllCheckbox" onchange="toggleAllCheckboxes()" title="Select all categories">
+                                </th>
+                                {% else %}
                                 <th></th>
+                                {% endif %}
                                 <th>Name</th>
                                 <th>Size</th>
                                 <th>Modified</th>
@@ -128,9 +143,15 @@ See NOTICE file for additional terms and conditions.
                             <!-- Folders -->
                             {% for folder in folders %}
                             <tr>
+                                {% if current_path == 'output' %}
+                                <td>
+                                    <input type="checkbox" class="category-checkbox" value="{{ folder.name }}" onchange="updateCompressButton()" title="Select {{ folder.name }} for compression">
+                                </td>
+                                {% else %}
                                 <td>
                                     <i class="fas fa-folder folder-icon"></i>
                                 </td>
+                                {% endif %}
                                 <td>
                                     <a href="/files/{{ folder.path }}" class="folder-link">
                                         {{ folder.name }}
@@ -195,6 +216,64 @@ See NOTICE file for additional terms and conditions.
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Compression functionality
+        function getSelectedCategories() {
+            const checkboxes = document.querySelectorAll('.category-checkbox:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        function updateCompressButton() {
+            const selected = getSelectedCategories();
+            const compressBtn = document.getElementById('compressBtn');
+            if (compressBtn) {
+                compressBtn.disabled = selected.length === 0;
+            }
+        }
+
+        function toggleAllCheckboxes() {
+            const selectAll = document.getElementById('selectAllCheckbox');
+            const checkboxes = document.querySelectorAll('.category-checkbox');
+            checkboxes.forEach(cb => cb.checked = selectAll.checked);
+            updateCompressButton();
+        }
+
+        function compressSelected() {
+            const selected = getSelectedCategories();
+            
+            if (selected.length === 0) {
+                showAlert('Please select at least one category to compress.', 'warning');
+                return;
+            }
+
+            const compressBtn = document.getElementById('compressBtn');
+            const originalText = compressBtn.innerHTML;
+            compressBtn.disabled = true;
+            compressBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Compressing...';
+
+            fetch('/compress_categories', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ categories: selected })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert(`Successfully compressed ${selected.length} categor${selected.length > 1 ? 'ies' : 'y'}! <a href="${data.archive_url}" target="_blank">Download Archive</a>`, 'success');
+                } else {
+                    showAlert('Error: ' + data.error, 'danger');
+                }
+            })
+            .catch(error => {
+                showAlert('Error compressing categories: ' + error.message, 'danger');
+            })
+            .finally(() => {
+                compressBtn.disabled = false;
+                compressBtn.innerHTML = originalText;
+            });
+        }
+
         // Delete functionality
         function deleteItem(path, name, type) {
             const itemType = type === 'folder' ? 'folder' : 'file';
@@ -271,20 +350,21 @@ See NOTICE file for additional terms and conditions.
             alertDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
             alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
             alertDiv.innerHTML = `
-                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'danger' ? 'exclamation-triangle' : 'info-circle'}"></i>
-                <strong>${type === 'success' ? 'Success' : type === 'danger' ? 'Error' : 'Info'}:</strong> ${message}
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'danger' ? 'exclamation-triangle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'}"></i>
+                <strong>${type === 'success' ? 'Success' : type === 'danger' ? 'Error' : type === 'warning' ? 'Warning' : 'Info'}:</strong> ${message}
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             `;
             
             // Add to page
             document.body.appendChild(alertDiv);
             
-            // Auto-dismiss after 5 seconds
+            // Auto-dismiss after 7 seconds for success messages with download links
+            const dismissTime = message.includes('<a href') ? 7000 : 5000;
             setTimeout(() => {
                 if (alertDiv.parentNode) {
                     alertDiv.remove();
                 }
-            }, 5000);
+            }, dismissTime);
         }
     </script>
 </body>

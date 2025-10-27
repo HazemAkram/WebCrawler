@@ -642,6 +642,60 @@ def delete_item():
     except Exception as e:
         return jsonify({'error': f'Error deleting item: {str(e)}'}), 500
 
+@app.route('/compress_categories', methods=['POST'])
+def compress_categories():
+    """Compress selected categories into a tar.gz archive"""
+    try:
+        data = request.get_json()
+        categories = data.get('categories', [])
+        
+        if not categories:
+            return jsonify({'error': 'No categories selected'}), 400
+        
+        output_folder = "output"
+        archives_folder = "archives"
+        
+        # Ensure archives folder exists
+        os.makedirs(archives_folder, exist_ok=True)
+        
+        # Validate that output folder exists
+        if not os.path.exists(output_folder):
+            return jsonify({'error': 'Output folder not found'}), 404
+        
+        # Check if all selected categories exist
+        for category in categories:
+            category_path = os.path.join(output_folder, category)
+            if not os.path.exists(category_path):
+                return jsonify({'error': f'Category not found: {category}'}), 404
+        
+        # Create timestamped archive
+        timestamp = datetime.now().strftime("%Y%m%d")
+        archive_name = f"{timestamp}.tar.gz"
+        archive_path = os.path.join(archives_folder, archive_name)
+        
+        # Build tar.gz archive with flattened structure
+        with tarfile.open(archive_path, "w:gz") as tar:
+            for category in categories:
+                category_path = os.path.join(output_folder, category)
+                if os.path.isdir(category_path):
+                    # Add each product in this category directly under output/
+                    for product_name in os.listdir(category_path):
+                        product_path = os.path.join(category_path, product_name)
+                        if os.path.isdir(product_path):
+                            # Set arcname to flatten: output/ProductName instead of output/Category/ProductName
+                            tar.add(product_path, arcname=f"output/{product_name}")
+        
+        # Return success with download URL
+        return jsonify({
+            'success': True,
+            'archive_url': f"/archives/{archive_name}",
+            'archive_path': archive_path,
+            'categories': categories
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error compressing categories: {str(e)}'}), 500
+
 @app.route('/product_count')
 def get_product_count():
     """Get the count of products in the output folder"""

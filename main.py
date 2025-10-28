@@ -70,12 +70,16 @@ def read_sites_from_csv(input_file):
                 # Ensure name selector is available to the PDF LLM by adding it to the target elements list
                 pdf_list.append(name_selector)
 
+            # PDF button selector for browser-triggered downloads
+            pdf_button_selector = row.get('pdf_button_selector', '').strip()
+
             sites.append({
                 "url": row["url"],
                 "cat_name": row.get("cat_name", "Uncategorized"),
                 "css_selector": css_list,
                 "pdf_selector": pdf_list,
                 "button_selector": row.get("button_selector", ""),
+                "pdf_button_selector": pdf_button_selector,
             })
     return sites
 
@@ -150,6 +154,7 @@ async def process_single_product(
                     pdf_llm_strategy=pdf_llm_strategy,
                     api_key=api_key,
                     cat_name=site["cat_name"],
+                    pdf_button_selector=site.get("pdf_button_selector", ""),
                 )
                 
                 if summary:
@@ -290,7 +295,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         
                         log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
                         
-                        BATCH_SIZE = 20  # Configurable: how many products to launch per batch
+                        BATCH_SIZE = 1  # Configurable: how many products to launch per batch
                         total_products = len(venues)
                         product_idx = 0
                         batch_num = 1

@@ -6,6 +6,9 @@ python-dotenv==1.1.0
 pydantic==2.11.7
 groq==0.30.0
 
+# Browser automation for PDF download buttons
+playwright>=1.40.0
+
 # Web framework
 Flask==3.1.1
 Werkzeug==3.1.3

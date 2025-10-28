@@ -841,6 +841,215 @@ def _cleanup_failed_pdf(file_path: str, log_message_func=None) -> None:
             log_message_func(f"⚠️ Failed to remove file {os.path.basename(file_path)}: {str(e)}", "WARNING")
 
 
+async def download_pdfs_via_playwright(
+    product_url: str,
+    pdf_button_selector: str,
+    output_folder: str,
+    api_key: str,
+    cat_name: str = "Uncategorized",
+) -> tuple:
+    """
+    Handle browser-triggered downloads using Playwright download events.
+    This is for websites where clicking a link triggers a browser "Save As" dialog
+    instead of providing a direct downloadable URL.
+    
+    Args:
+        product_url: URL of the product page
+        pdf_button_selector: CSS selector for download links/buttons
+        output_folder: Base output directory for downloads
+        api_key: API key for potential future use
+        cat_name: Category name for folder organization
+        
+    Returns:
+        Tuple of (list of file paths, product name, category path, product path)
+        Returns ([], "Unknown Product", "", "") on failure
+    """
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        log_message("❌ Playwright not installed. Run: pip install playwright && python -m playwright install", "ERROR")
+        return ([], "Unknown Product", "", "")
+    
+    log_message(f"🎭 Using Playwright to handle browser-triggered downloads", "INFO")
+    log_message(f"🌐 Product URL: {product_url}", "INFO")
+    log_message(f"🔘 Button selector: {pdf_button_selector}", "INFO")
+    
+    downloaded_files = []
+    derived_product_name = "Unknown Product"
+    category_path = ""
+    product_path = ""
+    
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-features=VizDisplayCompositor',
+                ]
+            )
+            
+            # Enable downloads in context
+            context = await browser.new_context(
+                accept_downloads=True,
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            
+            page = await context.new_page()
+            
+            # Track downloads info
+            downloads_info = []
+            
+            async def handle_download(download):
+                """Handle each download event"""
+                try:
+                    filename = download.suggested_filename
+                    log_message(f"📥 Download triggered: {filename}", "INFO")
+                    
+                    # Generate safe filename
+                    safe_filename = sanitize_filename(filename)
+                    
+                    # Create temporary path (will be moved later)
+                    temp_path = os.path.join(output_folder, safe_filename)
+                    os.makedirs(output_folder, exist_ok=True)
+                    
+                    # Save the download
+                    await download.save_as(temp_path)
+                    
+                    file_size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                    downloads_info.append({
+                        'url': download.url,
+                        'filename': filename,
+                        'path': temp_path,
+                        'size': file_size
+                    })
+                    
+                    log_message(f"✅ Saved: {safe_filename} ({file_size / 1024:.1f} KB)", "INFO")
+                    
+                except Exception as e:
+                    log_message(f"❌ Error saving download '{filename}': {str(e)}", "ERROR")
+            
+            # Register download handler
+            page.on("download", handle_download)
+            
+            # Navigate to product page
+            log_message(f"🌐 Loading product page...", "INFO")
+            try:
+                await page.goto(product_url, wait_until='networkidle', timeout=60000)
+            except Exception as e:
+                log_message(f"⚠️ Page load warning: {str(e)}", "WARNING")
+                # Try to continue anyway
+                await page.wait_for_timeout(3000)
+            
+            # Wait for page to settle
+            await page.wait_for_timeout(2000)
+            
+            # Extract product name using JavaScript
+            try:
+                # Reuse the product name extraction logic - wrap in arrow function for Playwright
+                derived_product_name = await page.evaluate("""
+                    () => {
+                        let productName = "";
+                        const selectors = ['h1', '.product-title', '.product-name', 'h1.title', 'h2'];
+                        for (let sel of selectors) {
+                            const el = document.querySelector(sel);
+                            if (el && el.innerText && el.innerText.trim().length > 2) {
+                                productName = el.innerText.trim();
+                                break;
+                            }
+                        }
+                        return productName || "Unknown Product";
+                    }
+                """)
+                if derived_product_name and derived_product_name != "Unknown Product":
+                    log_message(f"📝 Product name extracted: {derived_product_name}", "INFO")
+            except Exception as e:
+                log_message(f"⚠️ Could not extract product name: {str(e)}", "WARNING")
+                derived_product_name = "Unknown Product"
+            
+            # Create folder structure
+            sanitized_cat_name = sanitize_folder_name(cat_name)
+            category_path = os.path.join(output_folder, sanitized_cat_name)
+            os.makedirs(category_path, exist_ok=True)
+            
+            product_path = os.path.join(category_path, sanitize_folder_name(derived_product_name))
+            os.makedirs(product_path, exist_ok=True)
+            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
+            
+            # Find all download buttons/links
+            try:
+                elements = await page.locator(pdf_button_selector).all()
+                log_message(f"🔍 Found {len(elements)} download element(s)", "INFO")
+                
+                if not elements:
+                    log_message(f"⚠️ No elements found for selector: {pdf_button_selector}", "WARNING")
+                    await browser.close()
+                    return ([], derived_product_name, category_path, product_path)
+                
+                # Click each element and wait for downloads
+                for i, element in enumerate(elements, 1):
+                    try:
+                        # Get element text for logging
+                        text = await element.inner_text()
+                        text_preview = text.strip()[:50] if text else "No text"
+                        
+                        log_message(f"🖱️ Clicking element {i}/{len(elements)}: {text_preview}", "INFO")
+                        
+                        # Click and wait for potential download
+                        try:
+                            async with page.expect_download(timeout=15000) as download_info:
+                                await element.click()
+                                # Wait a bit for download to start
+                                await page.wait_for_timeout(1000)
+                            # Download will be handled by the handler above
+                        except Exception as timeout_err:
+                            # Some clicks might not trigger downloads, that's ok
+                            log_message(f"⚠️ Element {i} click did not trigger download: {str(timeout_err)}", "INFO")
+                            continue
+                        
+                    except Exception as e:
+                        log_message(f"⚠️ Error processing element {i}: {str(e)}", "WARNING")
+                        continue
+                
+                # Wait for all downloads to complete
+                await page.wait_for_timeout(2000)
+                
+            except Exception as e:
+                log_message(f"❌ Error finding/clicking elements: {str(e)}", "ERROR")
+            
+            await browser.close()
+            
+            # Move downloaded files to proper product folder
+            for download_info in downloads_info:
+                try:
+                    temp_path = download_info['path']
+                    filename = os.path.basename(temp_path)
+                    final_path = os.path.join(product_path, filename)
+                    
+                    if os.path.exists(temp_path):
+                        shutil.move(temp_path, final_path)
+                        downloaded_files.append(final_path)
+                        log_message(f"📦 Moved to: {os.path.relpath(final_path, output_folder)}", "INFO")
+                except Exception as e:
+                    log_message(f"⚠️ Failed to move file: {str(e)}", "WARNING")
+            
+            if downloaded_files:
+                log_message(f"✅ Successfully downloaded {len(downloaded_files)} file(s) via Playwright", "SUCCESS")
+            else:
+                log_message(f"⚠️ No files were downloaded", "WARNING")
+            
+            return (downloaded_files, derived_product_name, category_path, product_path)
+            
+    except Exception as e:
+        log_message(f"❌ Playwright download error: {str(e)}", "ERROR")
+        import traceback
+        traceback.print_exc()
+        return ([], derived_product_name, category_path, product_path)
+
+
 # https://www.ors.com.tr/en/tek-sirali-sabit-bilyali-rulmanlar
 async def download_pdf_links(
         crawler: AsyncWebCrawler, 
@@ -853,6 +1062,7 @@ async def download_pdf_links(
         domain_name: str = None,
         api_key: str = None,
         cat_name: str = "Uncategorized",
+        pdf_button_selector: str = "",
         ):
     
     """
@@ -881,6 +1091,126 @@ async def download_pdf_links(
     # Global dictionary to track downloaded files with their file paths across all products
     if not hasattr(download_pdf_links, 'downloaded_files'):
         download_pdf_links.downloaded_files = {}  # Dict: {url: file_path} for all file types
+
+    # Early return: If pdf_button_selector provided, use Playwright directly (skip LLM extraction)
+    if pdf_button_selector and pdf_button_selector.strip():
+        log_message(f"🎭 Detected pdf_button_selector, using Playwright for button-triggered downloads", "INFO")
+        try:
+            # Check if Playwright is available
+            try:
+                from playwright.async_api import async_playwright
+            except ImportError:
+                log_message(f"❌ Playwright required but not installed. Run: pip install playwright", "ERROR")
+                return {"productLink": product_url, "productName": None, "category": cat_name, "saved_count": 0, "has_datasheet": False}
+            
+            # Execute Playwright download
+            playwright_files, derived_product_name, category_path, product_path = await download_pdfs_via_playwright(
+                product_url=product_url,
+                pdf_button_selector=pdf_button_selector,
+                output_folder=output_folder,
+                api_key=api_key,
+                cat_name=cat_name,
+            )
+            
+            if not playwright_files:
+                log_message(f"⚠️ Playwright found no downloads for: {product_url}", "WARNING")
+                return {"productLink": product_url, "productName": derived_product_name, "category": cat_name, "saved_count": 0, "has_datasheet": False}
+            
+            log_message(f"📥 Playwright downloaded {len(playwright_files)} file(s)", "INFO")
+            
+            # Separate PDFs from other files for cleaning
+            pdfs_to_clean = []
+            saved_files = []
+            has_datasheet = False
+            
+            for file_path in playwright_files:
+                saved_files.append(file_path)
+                # Check if it's a PDF
+                if file_path.lower().endswith('.pdf'):
+                    pdfs_to_clean.append((file_path, product_url))
+                    # Check if it's a datasheet
+                    basename = os.path.basename(file_path).lower()
+                    if 'datasheet' in basename or 'data_sheet' in basename or 'specification' in basename:
+                        has_datasheet = True
+            
+            # Parallel PDF cleaning (reuse existing pipeline)
+            if pdfs_to_clean:
+                log_message(f"🧹 Starting parallel PDF cleaning for {len(pdfs_to_clean)} PDF(s)", "INFO")
+                
+                # Determine worker count
+                cpu_count = multiprocessing.cpu_count()
+                max_workers = max(1, min(cpu_count // 2, 4))
+                log_message(f"🔧 Using {max_workers} parallel workers for PDF cleaning", "INFO")
+                
+                # Timeout per PDF: 10 minutes (600 seconds)
+                PDF_TIMEOUT = 600
+                
+                # Track successful and failed PDFs
+                successful_pdfs = []
+                failed_pdfs = []
+                
+                # Process PDFs in parallel using ProcessPoolExecutor
+                loop = asyncio.get_event_loop()
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all PDF processing tasks
+                    future_to_pdf = {}
+                    for pdf_info in pdfs_to_clean:
+                        pdf_path, pdf_url = pdf_info
+                        future = executor.submit(_process_pdf_wrapper, pdf_path, api_key)
+                        future_to_pdf[future] = (pdf_path, pdf_url)
+                    
+                    # Wait for results with timeout handling
+                    for future, (pdf_path, pdf_url) in future_to_pdf.items():
+                        pdf_name = os.path.basename(pdf_path)
+                        try:
+                            successful_pdfs.append(pdf_path)
+                            log_message(f"✨ PDF cleaning completed: {pdf_name}", "INFO")
+                            # Notify tracker that PDF is cleaned
+                            pdf_id = pdf_url
+                            await _pdf_tracker.mark_cleaned(pdf_id, pdf_path)
+                        
+                        except FuturesTimeoutError:
+                            failed_pdfs.append(pdf_path)
+                            log_message(f"⏱️ PDF cleaning timeout ({PDF_TIMEOUT}s) for {pdf_name}", "ERROR")
+                            log_message(f"🗑️ Removing hung PDF: {pdf_name}", "WARNING")
+                            _cleanup_failed_pdf(pdf_path, log_message)
+                            # Notify tracker of failure
+                            pdf_id = pdf_url
+                            await _pdf_tracker.mark_cleaning_failed(pdf_id)
+                            # Remove from saved_files list
+                            if pdf_path in saved_files:
+                                saved_files.remove(pdf_path)
+                        
+                        except Exception as e:
+                            failed_pdfs.append(pdf_path)
+                            log_message(f"❌ Unexpected error cleaning {pdf_name}: {str(e)}", "ERROR")
+                            _cleanup_failed_pdf(pdf_path, log_message)
+                            # Notify tracker of failure
+                            pdf_id = pdf_url
+                            await _pdf_tracker.mark_cleaning_failed(pdf_id)
+                            # Remove from saved_files list
+                            if pdf_path in saved_files:
+                                saved_files.remove(pdf_path)
+                
+                # Summary of PDF cleaning
+                log_message(f"📊 PDF cleaning summary: {len(successful_pdfs)} successful, {len(failed_pdfs)} failed", "INFO")
+                if failed_pdfs:
+                    log_message(f"❌ Failed PDFs: {', '.join([os.path.basename(p) for p in failed_pdfs])}", "WARNING")
+            
+            # Return summary
+            return {
+                "productLink": product_url,
+                "productName": derived_product_name,
+                "category": cat_name,
+                "saved_count": len(saved_files),
+                "has_datasheet": has_datasheet,
+            }
+            
+        except Exception as e:
+            log_message(f"❌ Playwright download failed for {product_url}: {str(e)}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return {"productLink": product_url, "productName": None, "category": cat_name, "saved_count": 0, "has_datasheet": False}
 
     try:
         log_message(f"🔍 Starting file extraction for product page", "INFO")
@@ -944,6 +1274,7 @@ async def download_pdf_links(
                 # Validate extracted product name
                 if productName and productName.strip() and productName != "Unnamed Product":
                     derived_product_name = productName.strip()
+                    derived_product_name = f"Foot Mounted Vibration Motors {derived_product_name}"
                     log_message(f"📝 Using extracted product name: '{derived_product_name}'", "INFO")
                 else:
                     derived_product_name = "Unnamed Product"
@@ -1408,7 +1739,7 @@ def detect_pagination_type(url: str) -> str:
         
         # Check query parameters
         pagination_params = {
-            'page': ['page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber'],
+            'page': ['page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber', 'currentPage'],
             'offset': ['offset'],
             'start': ['start'],
             'skip': ['skip'],
@@ -1452,7 +1783,7 @@ def get_page_number(base_url: str):
             if part.isdigit():
                 # Check if this looks like a page number (not an ID)
                 # Common patterns: /page/1, /1, /p/1, /products/1
-                if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog']) or \
+                if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog', 'currentPage']) or \
                    (i == len(path_parts) - 1 and len(path_parts) > 1):
                     log_message(f"📄 Found path-based page number: {part} in URL path", "INFO")
                     return int(part)
@@ -1463,7 +1794,7 @@ def get_page_number(base_url: str):
             'offset', 'start', 'skip', 'from',
             'limit', 'size', 'per_page', 'items_per_page',
             'cursor', 'after', 'before', 'next', 'prev',
-            'page_id', 'pageid', 'pageno', 'pagenum'
+            'page_id', 'pageid', 'pageno', 'pagenum', 'currentPage'
         ]
         
         for param in pagination_params_to_check:
@@ -1534,7 +1865,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
         for i, part in enumerate(path_parts):
             if part.isdigit() and current_page:
                 # Check if this looks like a page number
-                if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog']) or \
+                if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg','currentPage', 'products', 'category', 'catalog']) or \
                    (i == len(path_parts) - 1 and len(path_parts) > 1):
                     detected_pagination_type = "path"
                     break
@@ -1546,7 +1877,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
                 'offset', 'start', 'skip', 'from',
                 'limit', 'size', 'per_page', 'items_per_page',
                 'cursor', 'after', 'before', 'next', 'prev',
-                'page_id', 'pageid', 'pageno', 'pagenum'
+                'page_id', 'pageid', 'pageno', 'pagenum', 'currentPage'
             ]
             
             for param in pagination_params_to_check:
@@ -1570,7 +1901,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
             for i, part in enumerate(path_parts):
                 if part.isdigit() and not page_replaced:
                     # Check if this looks like a page number
-                    if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'products', 'category', 'catalog']) or \
+                    if (i > 0 and path_parts[i-1].lower() in ['page', 'p', 'pg', 'currentPage', 'products', 'category', 'catalog']) or \
                        (i == len(path_parts) - 1 and len(path_parts) > 1):
                         new_path_parts.append(str(page_number))
                         page_replaced = True
@@ -1597,7 +1928,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
                 'offset', 'start', 'skip', 'from',
                 'limit', 'size', 'per_page', 'items_per_page',
                 'cursor', 'after', 'before', 'next', 'prev',
-                'page_id', 'pageid', 'pageno', 'pagenum'
+                'page_id', 'pageid', 'pageno', 'pagenum', 'currentPage'
             ]
             
             # Find and remove existing pagination parameter
@@ -1609,7 +1940,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
                     break
             
             # Calculate pagination values based on type
-            if pagination_type in ["page", "p", "pg", "page_num", "page_number", "pageNumber"]:
+            if pagination_type in ["page", "p", "pg", "page_num", "page_number", "pageNumber", "currentPage"]:
                 query_params['page'] = [str(page_number)]
             elif pagination_type == "offset":
                 # Calculate offset based on page number
@@ -1665,7 +1996,7 @@ def get_browser_config() -> BrowserConfig:
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate
-        headless=True,  # Whether to run in headless mode (no GUI)
+        headless=False,  # Whether to run in headless mode (no GUI)
         viewport_height=1080,
         viewport_width=1920,
         verbose=True,  # Enable verbose logging

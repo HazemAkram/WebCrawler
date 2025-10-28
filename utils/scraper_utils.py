@@ -1739,7 +1739,7 @@ def detect_pagination_type(url: str) -> str:
         
         # Check query parameters
         pagination_params = {
-            'page': ['page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber', 'currentPage'],
+            'currentPage': ['page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber', 'currentPage'],
             'offset': ['offset'],
             'start': ['start'],
             'skip': ['skip'],
@@ -1924,7 +1924,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
         else:
             # Remove any existing pagination parameters
             pagination_params_to_remove = [
-                'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
+                'currentPage','page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
                 'offset', 'start', 'skip', 'from',
                 'limit', 'size', 'per_page', 'items_per_page',
                 'cursor', 'after', 'before', 'next', 'prev',
@@ -1941,7 +1941,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
             
             # Calculate pagination values based on type
             if pagination_type in ["page", "p", "pg", "page_num", "page_number", "pageNumber", "currentPage"]:
-                query_params['page'] = [str(page_number)]
+                query_params['currentPage'] = [str(page_number)]
             elif pagination_type == "offset":
                 # Calculate offset based on page number
                 offset_value = (page_number - 1) * items_per_page

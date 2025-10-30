@@ -72,7 +72,6 @@ def read_sites_from_csv(input_file):
 
             # PDF button selector for browser-triggered downloads
             pdf_button_selector = row.get('pdf_button_selector', '').strip()
-
             sites.append({
                 "url": row["url"],
                 "cat_name": row.get("cat_name", "Uncategorized"),
@@ -196,7 +195,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     
     # Concurrency control: limit parallel product processing
     # With 64GB RAM, we can handle 16-24 concurrent products safely
-    MAX_CONCURRENT_PRODUCTS = 20
+    MAX_CONCURRENT_PRODUCTS = int(os.environ.get('MAX_CONCURRENT_PRODUCTS', '20'))
     product_semaphore = asyncio.Semaphore(MAX_CONCURRENT_PRODUCTS)
 
     sites = read_sites_from_csv(input_file)
@@ -295,7 +294,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         
                         log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
                         
-                        BATCH_SIZE = 20  # Configurable: how many products to launch per batch
+                        BATCH_SIZE = 5  # Configurable: how many products to launch per batch
                         total_products = len(venues)
                         product_idx = 0
                         batch_num = 1

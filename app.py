@@ -927,4 +927,4 @@ def start_products():
 if __name__ == '__main__':
     # SECURITY: Binding to specific IP address 65.108.122.8
     # This allows external access from the specified IP
-    app.run(debug=DEBUG_MODE, host='0.0.0.0', port=5000) 
+    app.run(debug=DEBUG_MODE, host='0.0.0.0', port=int(os.environ.get('PORT', '5000')))

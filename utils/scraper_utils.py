@@ -1275,7 +1275,6 @@ async def download_pdf_links(
                 # Validate extracted product name
                 if productName and productName.strip() and productName != "Unnamed Product":
                     derived_product_name = productName.strip()
-                    derived_product_name = f"Foot Mounted Vibration Motors {derived_product_name}"
                     log_message(f"📝 Using extracted product name: '{derived_product_name}'", "INFO")
                 else:
                     derived_product_name = "Unnamed Product"

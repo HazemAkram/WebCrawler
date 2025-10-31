@@ -1221,6 +1221,7 @@ async def download_pdf_links(
 
         # Enhanced JavaScript product name extraction using helper function
         # The second selector will be used as primary, with comprehensive fallback selectors
+        product_url = f"{product_url}#documents"
         js_commands = generate_product_name_js_commands(pdf_selector[-1])
         # Crawl the page with CSS selector targeting PDF links
         pdf_result = await crawler.arun(

@@ -61,11 +61,7 @@ def read_sites_from_csv(input_file):
     sites = []
     with open(input_file, encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=',')
-        x=1
-
         for row in reader:
-            print(f"Row {x}")
-            x+=1
             css_list = [s.strip() for s in row['css_selector'].split('|') if s.strip()] if row.get('css_selector') else []
             pdf_list = [s.strip() for s in row['pdf_selector'].split('|') if s.strip()] if row.get('pdf_selector') else []
             # Optional name selector to extract product name on product page

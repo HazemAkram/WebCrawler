@@ -61,7 +61,11 @@ def read_sites_from_csv(input_file):
     sites = []
     with open(input_file, encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=',')
+        x=1
+
         for row in reader:
+            print(f"Row {x}")
+            x+=1
             css_list = [s.strip() for s in row['css_selector'].split('|') if s.strip()] if row.get('css_selector') else []
             pdf_list = [s.strip() for s in row['pdf_selector'].split('|') if s.strip()] if row.get('pdf_selector') else []
             # Optional name selector to extract product name on product page
@@ -294,7 +298,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         
                         log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
                         
-                        BATCH_SIZE = 20  # Configurable: how many products to launch per batch
+                        BATCH_SIZE = 10  # Configurable: how many products to launch per batch
                         total_products = len(venues)
                         product_idx = 0
                         batch_num = 1
@@ -403,6 +407,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     log_message(f"Crawling completed. Total venues processed: {len(all_venues)}", "SUCCESS")
 async def main():
     log_message(f"{'='*50} Starting crawling {'='*50}", "INFO")
+    # here we should take the csv file name from the .env file to enable the third crawler
     await crawl_from_sites_csv("sites.csv")
     log_message(f"{'='*50} Crawl completed {'='*50}", "INFO")
 

@@ -248,6 +248,8 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
     """
     return f"""
         console.log('[JS] Starting enhanced product name extraction...');
+        b = document.querySelector("button.button--F1V85.select--bZS35");
+        b.click();
         await new Promise(r => setTimeout(r, 3000));
 
         // Primary selector from CSV configuration
@@ -1571,7 +1573,7 @@ async def download_pdf_links(
                             if is_pdf:
                                 lowered = os.path.basename(save_path).lower()
                                 cert_terms = [
-                                    'certificate','certification','certifications','iso','tse', 'declaration', 
+                                    'certificate','certification','certifications','iso','tse', 'declaration', 'Garanti', 'Garanti Belgisi', 'Generic - Garanti Belgesi'
                                     'coc','iec','emc','ped','fda','rohs','iecex','csa','warranty','contacts','list of ifm contacts','list of contacts'
                                 ]
                                 if any(term in lowered for term in cert_terms): 
@@ -2106,7 +2108,7 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             "- priority: High for Data Sheet, Installation Guide, User Manual, Technical Drawing, and CAD; Medium for Catalog, ZIP.\n"
             "   - 'Installation Guide' documents are always High priority.\n"
             "Do not extract a list of contact files.\n"
-            "Ignore certificates/compliance-only links. Return a JSON array matching the schema."
+            "Ignore certificates and Garanti Belgisi/compliance-only links. Return a JSON array matching the schema."
         ),
         input_format="markdown",  # Format of the input content
         verbose=False,  # Enable verbose logging
@@ -2332,6 +2334,8 @@ async def fetch_and_process_page_with_js(
         if not js_extracted_content:
             log_message("No content extracted via JS", "INFO")
             return [], True
+
+        print(js_extracted_content)
         for items in js_extracted_content:
             log_message(f"processing page: {items['page']}, data length: {len(items['data'])}")
             products_string = "".join([item['html'] for item in items['data']])

@@ -57,12 +57,12 @@ DEFAULT_CONFIG = {
             "EDZ"
         ],
         "per_type_limits": {
-            "Data Sheet": 5,
-            "Technical Drawing": 5,
-            "User Manual": 5,
-            "Installation Guide": 5,
-            "User guide": 5,
-            "Generic": 5,
+            "Data Sheet": 2,
+            "Technical Drawing": 1,
+            "User Manual": 2,
+            "Installation Guide": 1,
+            "User guide": 1,
+            "Generic": 1,
             "CAD": 4,
             "ZIP": 2,
             "Catalog": 1,

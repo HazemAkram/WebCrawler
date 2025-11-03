@@ -248,8 +248,6 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
     """
     return f"""
         console.log('[JS] Starting enhanced product name extraction...');
-        b = document.querySelector("button.button--F1V85.select--bZS35");
-        b.click();
         await new Promise(r => setTimeout(r, 3000));
 
         // Primary selector from CSV configuration
@@ -2335,7 +2333,6 @@ async def fetch_and_process_page_with_js(
             log_message("No content extracted via JS", "INFO")
             return [], True
 
-        print(js_extracted_content)
         for items in js_extracted_content:
             log_message(f"processing page: {items['page']}, data length: {len(items['data'])}")
             products_string = "".join([item['html'] for item in items['data']])

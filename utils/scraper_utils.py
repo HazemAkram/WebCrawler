@@ -250,6 +250,28 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
         console.log('[JS] Starting enhanced product name extraction...');
         await new Promise(r => setTimeout(r, 3000));
 
+        // Special case: Try extracting from h1.childNodes[2] first (for specific site structure)
+        var productName = "";
+        var usedSelector = "";
+        try {{
+            var h1 = document.querySelector("h1");
+            if (h1 && h1.childNodes && h1.childNodes.length > 2) {{
+                var childNode = h1.childNodes[2];
+                if (childNode && childNode.nodeType === 3) {{ // Text node
+                    var text = childNode.textContent.trim().replace(/"/g, '');
+                    if (text && text.length > 2 && text.length < 200) {{
+                        productName = text;
+                        usedSelector = "h1.childNodes[2]";
+                        console.log('[JS] Successfully extracted product name from h1.childNodes[2]:', productName);
+                        console.log('[JS] Used selector: h1.childNodes[2]');
+                        return productName;
+                    }}
+                }}
+            }}
+        }} catch (error) {{
+            console.log('[JS] Error with h1.childNodes[2] extraction:', error.message);
+        }}
+
         // Primary selector from CSV configuration
         var primarySelector = '{primary_selector}';
         
@@ -276,8 +298,6 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
         // Combine primary and fallback selectors
         var allSelectors = [primarySelector, ...fallbackSelectors];
         
-        var productName = "";
-        var usedSelector = "";
         var extractionAttempts = [];
         
         // Try each selector until we find a valid product name
@@ -2158,8 +2178,8 @@ async def fetch_and_process_page(
             extraction_strategy=llm_strategy,  # Strategy for data extraction
             target_elements = css_selector,  # Target specific content on the page
             session_id=session_id,  # Unique session ID for the crawl
-            scan_full_page=True,
-            remove_overlay_elements=True,
+            # scan_full_page=True,
+            # remove_overlay_elements=True,
             verbose=True,  # Enable verbose logging
 
         ),

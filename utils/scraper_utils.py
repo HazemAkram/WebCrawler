@@ -1464,7 +1464,10 @@ async def download_pdf_links(
                             save_path = os.path.join(productPath, filename)
                             
                             # Ensure product folder exists before copying (in case it wasn't created earlier)
+                            folder_created = not os.path.exists(productPath)
                             os.makedirs(productPath, exist_ok=True)
+                            if folder_created:
+                                log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
                             
                             # For PDFs, check if cleaned before copying
                             if is_pdf:

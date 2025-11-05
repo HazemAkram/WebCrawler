@@ -94,6 +94,42 @@ See NOTICE file for additional terms and conditions.
                     </div>
                 </div>
 
+                <!-- Remote Crawlers Section -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="fas fa-network-wired"></i> Remote Crawlers
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary" onclick="loadRemoteCrawlers()">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="remoteCrawlersEmpty" class="text-muted" style="display:none;">
+                            Configure REMOTE_CRAWLERS in the web app service to monitor workers.
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Service</th>
+                                        <th>Base URL</th>
+                                        <th>Status</th>
+                                        <th>Site</th>
+                                        <th>Page</th>
+                                        <th>Venues</th>
+                                        <th>Elapsed</th>
+                                        <th>Logs</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="remoteCrawlersBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Configuration Section -->
                 <div class="card">
                     <div class="card-header">

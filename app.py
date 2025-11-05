@@ -20,6 +20,8 @@ import secrets
 from pathlib import Path
 import zipfile
 import tarfile
+import json
+import requests
 
 
 # Import the crawling functions
@@ -37,6 +39,10 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
 DEBUG_MODE = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
 # SECURITY: Simple password gate (optional). Set FLASK_APP_PASSWORD env var.
 APP_PASSWORD = os.environ.get('FLASK_APP_PASSWORD')
+
+# Remote crawler monitoring: comma-separated list of base URLs
+# Example: REMOTE_CRAWLERS="http://127.0.0.1:6001,http://127.0.0.1:6002"
+REMOTE_CRAWLERS = [u.strip() for u in os.environ.get('REMOTE_CRAWLERS', '').split(',') if u.strip()]
 
 # Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -319,6 +325,54 @@ def get_status():
 def get_logs():
     """Get all logs"""
     return jsonify({'logs': crawling_status['logs']})
+
+# ===================== Remote crawler monitoring =====================
+
+@app.route('/remote_crawlers')
+def list_remote_crawlers():
+    """Return configured remote crawler base URLs"""
+    return jsonify({'crawlers': REMOTE_CRAWLERS})
+
+
+@app.route('/remote_status')
+def remote_status():
+    """Fetch /status from all configured remote crawlers (or a single one via ?base=URL)"""
+    base = request.args.get('base')
+    targets = [base] if base else REMOTE_CRAWLERS
+    results = []
+    for url in targets:
+        try:
+            resp = requests.get(url.rstrip('/') + '/status', timeout=3)
+            resp.raise_for_status()
+            data = resp.json()
+            results.append({'base': url, 'ok': True, 'status': data})
+        except Exception as e:
+            results.append({'base': url, 'ok': False, 'error': str(e)})
+    return jsonify({'results': results})
+
+
+@app.route('/remote_logs')
+def remote_logs():
+    """Fetch /logs from a remote crawler (?base=URL&tail=200). If no base provided, aggregate from all."""
+    base = request.args.get('base')
+    tail = request.args.get('tail', '200')
+    if base:
+        try:
+            resp = requests.get(base.rstrip('/') + f'/logs?tail={tail}', timeout=3)
+            resp.raise_for_status()
+            return jsonify({'base': base, 'ok': True, 'data': resp.json()})
+        except Exception as e:
+            return jsonify({'base': base, 'ok': False, 'error': str(e)}), 502
+    # Aggregate all
+    results = []
+    for url in REMOTE_CRAWLERS:
+        try:
+            resp = requests.get(url.rstrip('/') + f'/logs?tail={tail}', timeout=3)
+            resp.raise_for_status()
+            results.append({'base': url, 'ok': True, 'data': resp.json()})
+        except Exception as e:
+            results.append({'base': url, 'ok': False, 'error': str(e)})
+    return jsonify({'results': results})
 
 @app.route('/archives/<path:filename>')
 def serve_archive(filename):

@@ -673,7 +673,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         print(f"   Page {page_num}: Removed {removed_count} text chunks")
         
         # After OCR-based text removal, process footer area with AI (handles OCR-resistant text)
-        img_cv = remove_footer_area(img_cv, page_num, groq_client)
+        # img_cv = remove_footer_area(img_cv, page_num, groq_client)
         
         # Convert back to PIL format and add to results
         modified_images.append(Image.fromarray(img_cv))

@@ -1241,7 +1241,7 @@ async def download_pdf_links(
 
         # Enhanced JavaScript product name extraction using helper function
         # The second selector will be used as primary, with comprehensive fallback selectors
-        product_url = f"{product_url}#documents"
+        product_url = f"{product_url}"
         js_commands = generate_product_name_js_commands(pdf_selector[-1])
         # Crawl the page with CSS selector targeting PDF links
         pdf_result = await crawler.arun(
@@ -1308,6 +1308,17 @@ async def download_pdf_links(
             log_message(f"❌ Error extracting product name from JavaScript result: {str(e)}", "ERROR")
             log_message(f"📝 Using fallback product name: '{derived_product_name}'", "INFO")
 
+        # Create the download folder structure after product name extraction
+        os.makedirs(output_folder, exist_ok=True)
+        sanitized_cat_name = sanitize_folder_name(cat_name)
+        category_path = os.path.join(output_folder, sanitized_cat_name)
+        os.makedirs(category_path, exist_ok=True)
+        
+        productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
+        if not os.path.exists(productPath):
+            os.makedirs(productPath)
+            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
+
         # Step 3: Split extracted files into PDFs and other file types
         pdf_docs = []
         other_docs = []
@@ -1369,20 +1380,6 @@ async def download_pdf_links(
             return {"productLink": product_url, "productName": derived_product_name, "category": cat_name, "saved_count": 0, "has_datasheet": False}
 
         log_message(f"📄 Found {len(pdf_docs)} PDF(s) and {len(other_docs)} other file(s) for product: {derived_product_name}", "INFO")
-
-        # Create the download folder if it doesn't exist
-        os.makedirs(output_folder, exist_ok=True)
-
-        # Create category-based folder structure: output/{category}/{product}
-        sanitized_cat_name = sanitize_folder_name(cat_name)
-        category_path = os.path.join(output_folder, sanitized_cat_name)
-        os.makedirs(category_path, exist_ok=True)
-        
-        productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
-        if not os.path.exists(productPath):
-            os.makedirs(productPath)
-            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
-
 
         # Enhanced sorting: Priority first, then by document type preference, then by language
         def sort_key(doc):
@@ -1468,6 +1465,7 @@ async def download_pdf_links(
                             os.makedirs(productPath, exist_ok=True)
                             if folder_created:
                                 log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
+                            # Note: Folder should already exist from line 1383, this is a safety check
                             
                             # For PDFs, check if cleaned before copying
                             if is_pdf:
@@ -2019,6 +2017,8 @@ def get_browser_config() -> BrowserConfig:
 
     ua = UserAgent()
     user_agent = ua.random  # Generate a random user agent string
+    # print(repr(f"User agent: {user_agent}"))
+
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
         browser_type="chromium",  # Type of browser to simulate

@@ -1463,6 +1463,9 @@ async def download_pdf_links(
                             filename = filename.replace('\\', '_').replace('/', '_')
                             save_path = os.path.join(productPath, filename)
                             
+                            # Ensure product folder exists before copying (in case it wasn't created earlier)
+                            os.makedirs(productPath, exist_ok=True)
+                            
                             # For PDFs, check if cleaned before copying
                             if is_pdf:
                                 pdf_id = file_url  # Use URL as unique identifier
@@ -2163,9 +2166,22 @@ async def fetch_and_process_page(
 
 
     js_commands = f"""
-        console.log('[JS] Starting data extraction...');
-        await new Promise(r => setTimeout(r, 3000));
-        return 0;
+
+        try {{
+            var btn = document.querySelector("a[title='Show more']");
+            console.log('[JS] Button found:', btn);
+            for (let i = 0; i < 10; i++) {{
+                if (btn !== null) {{
+                    btn.click();
+                    console.log('[JS] Button clicked');
+                    await new Promise(r => setTimeout(r, 3000));
+                    btn = document.querySelector("a[title='Show more']");
+                }}
+            }}
+            console.log('[JS] Tmmamdir');
+        }} catch (error) {{
+            console.log('[JS] Error with button extraction:', error.message);
+        }}   
     """
     # Debugging: Print the URL being fetched
     log_message(f"🔄 Crawling page {page_number} from URL: {url}", "INFO")    

@@ -1114,6 +1114,9 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         # Add cover page with smart resizing
         if os.path.exists("cover.png"):
             cover = Image.open("cover.png")
+            # Convert cover to RGB if needed (JPEG doesn't support palette mode)
+            if cover.mode != "RGB":
+                cover = cover.convert("RGB")
             
             # Get dimensions of the first page to determine PDF orientation
             if final_images:
@@ -1145,6 +1148,9 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_files = []
             for idx, im in enumerate(final_images):
+                # Convert to RGB if needed (JPEG doesn't support palette mode or other modes)
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
                 tmp_path = os.path.join(tmpdir, f"page_{idx:05d}.jpg")
                 im.save(tmp_path, format="JPEG", quality=85, optimize=True)
                 temp_files.append(tmp_path)

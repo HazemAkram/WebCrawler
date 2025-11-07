@@ -3,7 +3,6 @@ let uploadedFile = null;
 let statusInterval = null;
 let isRunning = false;
 let outputStatsInterval = null;
-let remotePollInterval = null;
 
 // File upload handling
 const fileUploadArea = document.getElementById('fileUploadArea');
@@ -378,87 +377,6 @@ function stopOutputStatsPolling() {
 document.addEventListener('DOMContentLoaded', function () { 
     updateStatus('idle'); 
     startOutputStatsPolling();
-    startRemotePolling();
 });
 
-
-// Remote crawlers monitoring
-function startRemotePolling() {
-    if (remotePollInterval) clearInterval(remotePollInterval);
-    loadRemoteCrawlers();
-    remotePollInterval = setInterval(loadRemoteCrawlers, 5000);
-}
-
-function stopRemotePolling() {
-    if (remotePollInterval) {
-        clearInterval(remotePollInterval);
-        remotePollInterval = null;
-    }
-}
-
-function loadRemoteCrawlers() {
-    fetch('/remote_status')
-        .then(r => r.json())
-        .then(data => {
-            const tbody = document.getElementById('remoteCrawlersBody');
-            const empty = document.getElementById('remoteCrawlersEmpty');
-            if (!data || !data.results || data.results.length === 0) {
-                if (tbody) tbody.innerHTML = '';
-                if (empty) empty.style.display = 'block';
-                return;
-            }
-            if (empty) empty.style.display = 'none';
-            if (!tbody) return;
-            tbody.innerHTML = '';
-            data.results.forEach(item => {
-                const tr = document.createElement('tr');
-                if (!item.ok) {
-                    tr.innerHTML = `
-                        <td>-</td>
-                        <td>${escapeHtml(item.base)}</td>
-                        <td><span class="badge bg-danger">Error</span> <small class="text-muted">${escapeHtml(item.error || '')}</small></td>
-                        <td colspan="4">-</td>
-                        <td><a class="btn btn-sm btn-outline-secondary disabled">Logs</a></td>
-                    `;
-                } else {
-                    const s = item.status || {};
-                    const running = s.is_running ? '<span class="badge bg-success">Running</span>' : '<span class="badge bg-secondary">Idle</span>';
-                    const elapsed = s.elapsed_time != null ? formatElapsed(s.elapsed_time) : '-';
-                    tr.innerHTML = `
-                        <td>${escapeHtml(s.service || '-')}</td>
-                        <td>${escapeHtml(item.base)}</td>
-                        <td>${running}</td>
-                        <td>${Number(s.current_site) || 0} / ${Number(s.total_sites) || 0}</td>
-                        <td>${Number(s.current_page) || 1}</td>
-                        <td>${Number(s.total_venues) || 0}</td>
-                        <td>${elapsed}</td>
-                        <td>
-                            <a class="btn btn-sm btn-outline-secondary" target="_blank" href="/remote_logs?base=${encodeURIComponent(item.base)}&tail=200">View</a>
-                        </td>
-                    `;
-                }
-                tbody.appendChild(tr);
-            });
-        })
-        .catch(() => { /* ignore */ });
-}
-
-function formatElapsed(seconds) {
-    const s = Math.floor(seconds % 60);
-    const m = Math.floor((seconds / 60) % 60);
-    const h = Math.floor(seconds / 3600);
-    const pad = (n) => n.toString().padStart(2, '0');
-    return `${pad(h)}:${pad(m)}:${pad(s)}`;
-}
-
-function escapeHtml(text) {
-    if (text == null) return '';
-    return text
-        .toString()
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
 

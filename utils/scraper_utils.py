@@ -21,6 +21,7 @@ import multiprocessing
 
 import aiofiles
 import aiohttp
+from http.cookies import SimpleCookie
 
 from typing import List, Set, Tuple
 from fake_useragent import UserAgent
@@ -247,6 +248,17 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
         str: JavaScript code for product name extraction
     """
     return f"""
+
+        try{{
+            var btn = document.querySelector("button.button--F1V85.select--bZS35");
+            if (btn) {{
+                btn.click();
+                console.log('[JS] Button clicked');
+                await new Promise(r => setTimeout(r, 3000));
+            }}
+        }} catch (error) {{
+            console.log('[JS] Error with button extraction:', error.message);
+        }}
         console.log('[JS] Starting enhanced product name extraction...');
         await new Promise(r => setTimeout(r, 3000));
 
@@ -860,6 +872,15 @@ def _cleanup_failed_pdf(file_path: str, log_message_func=None) -> None:
         if log_message_func:
             log_message_func(f"⚠️ Failed to remove file {os.path.basename(file_path)}: {str(e)}", "WARNING")
 
+def build_cookie_header(cookie_dict: dict[str, str]) -> str: 
+    return "; ".join(f"{k}={v}" for k,v in cookie_dict.items())
+
+async def get_browser_cookies(crawler: AsyncWebCrawler) -> dict[str, str]: 
+    context = await crawler.browser_manger.get__primary_context()
+    cookies = await context.cookies()
+
+    return {cookie["name"]: cookie["value"] for cookie in cookies}
+
 
 async def download_pdfs_via_playwright(
     product_url: str,
@@ -1430,11 +1451,46 @@ async def download_pdf_links(
 
         # Download all files with duplicate checking (SSL verification disabled)
         log_message(f"📥 Starting download of {len(all_files)} file(s)", "INFO")
+
+        bm = crawler.crawler_strategy.browser_manager
+        pdf_session_id = f"{session_id}_pdf_extraction"   # the same session_id you pass to CrawlerRunConfig
+
+        # after crawler.arun(...) completes
+        context, page, _ = bm.sessions[pdf_session_id]    # stored as (context, page, last_used_ts)
+
+        cookies = await context.cookies()
+        cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+        ua = crawler.browser_config.user_agent
+
+
+        request_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": product_url,
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Pragma": "no-cache",
+            "Cache-Control": "no-cache",
+            "Cookie": cookie_header,
+        }
+
         saved_files = []
         pdfs_to_clean = []  # Collect PDFs for parallel processing
         has_datasheet = False
         timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as session:
+       
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=True), 
+            timeout=timeout,
+            headers=request_headers,
+        ) as session: # try to add headers to the request 
+
             for i, file_info in enumerate(all_files, 1):
                 file_url = file_info['url']
                 file_text = file_info['text']
@@ -1513,7 +1569,19 @@ async def download_pdf_links(
                     last_exc = None
                     while attempt < max_attempts:
                         try:
-                            resp = await session.get(file_url)
+                            resp = await session.get(
+                                file_url,
+                                headers={**request_headers, "Referer": product_url, "User-Agent": request_headers["User-Agent"]},
+                                allow_redirects=True
+                            )
+                            if resp.status == 403: 
+                                print("403 error, retrying...")
+                                await asyncio.sleep(1.5)
+                                resp = await session.get(
+                                    file_url,
+                                    headers={**request_headers, "Referer": product_url, "User-Agent": request_headers["User-Agent"]},
+                                    allow_redirects=True,
+                                )
                             break
                         except Exception as req_exc:
                             last_exc = req_exc
@@ -2016,12 +2084,13 @@ def get_browser_config() -> BrowserConfig:
     """
 
     ua = UserAgent()
-    user_agent = ua.random  # Generate a random user agent string
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"  # Generate a random user agent string
     # print(repr(f"User agent: {user_agent}"))
+    browser_type = "chromium"
 
     # https://docs.crawl4ai.com/core/browser-crawler-config/
     return BrowserConfig(
-        browser_type="chromium",  # Type of browser to simulate
+        browser_type=browser_type,  # Type of browser to simulate
         headless=True,  # Whether to run in headless mode (no GUI)
         viewport_height=1080,
         viewport_width=1920,
@@ -2169,16 +2238,16 @@ async def fetch_and_process_page(
 
 
     js_commands = f"""
-
+        await new Promise(r => setTimeout(r, 3000));
         try {{
-            var btn = document.querySelector("a[title='Show more']");
+            var btn = document.querySelector("davinci-button");
             console.log('[JS] Button found:', btn);
-            for (let i = 0; i < 10; i++) {{
+            for (let i = 0; i < 35; i++) {{
                 if (btn !== null) {{
                     btn.click();
                     console.log('[JS] Button clicked');
                     await new Promise(r => setTimeout(r, 3000));
-                    btn = document.querySelector("a[title='Show more']");
+                    btn = document.querySelector("davinci-button");
                 }}
             }}
             console.log('[JS] Tmmamdir');

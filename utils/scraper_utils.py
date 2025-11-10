@@ -2266,8 +2266,8 @@ async def fetch_and_process_page(
             extraction_strategy=llm_strategy,  # Strategy for data extraction
             target_elements = css_selector,  # Target specific content on the page
             session_id=session_id,  # Unique session ID for the crawl
-            # scan_full_page=True,
-            # remove_overlay_elements=True,
+            scan_full_page=True,
+            remove_overlay_elements=True,
             verbose=True,  # Enable verbose logging
 
         ),

@@ -251,6 +251,12 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
 
         try{{
             var btn = document.querySelector("button.button--F1V85.select--bZS35");
+            var btn2 = document.querySelector("button[id='didomi-notice-agree-button']");
+            if (btn2) {{
+                btn2.click();
+                console.log('[JS] Button clicked');
+                await new Promise(r => setTimeout(r, 3000));
+            }}
             if (btn) {{
                 btn.click();
                 console.log('[JS] Button clicked');
@@ -2238,19 +2244,15 @@ async def fetch_and_process_page(
 
 
     js_commands = f"""
-        await new Promise(r => setTimeout(r, 3000));
-        try {{
-            var btn = document.querySelector("davinci-button");
-            console.log('[JS] Button found:', btn);
-            for (let i = 0; i < 35; i++) {{
-                if (btn !== null) {{
-                    btn.click();
-                    console.log('[JS] Button clicked');
-                    await new Promise(r => setTimeout(r, 3000));
-                    btn = document.querySelector("davinci-button");
-                }}
+        try{{
+
+            await new Promise(r => setTimeout(r, 3000));
+            var btn2 = document.querySelector("button[id='didomi-notice-agree-button']");
+            if (btn2) {{
+                btn2.click();
+                console.log('[JS] Button clicked');
+                await new Promise(r => setTimeout(r, 3000));
             }}
-            console.log('[JS] Tmmamdir');
         }} catch (error) {{
             console.log('[JS] Error with button extraction:', error.message);
         }}   

@@ -2098,8 +2098,8 @@ def get_browser_config() -> BrowserConfig:
     return BrowserConfig(
         browser_type=browser_type,  # Type of browser to simulate
         headless=True,  # Whether to run in headless mode (no GUI)
-        viewport_height=1080,
-        viewport_width=1920,
+        viewport_height=720,
+        viewport_width=1080,
         verbose=True,  # Enable verbose logging
         user_agent = user_agent,  # Custom headers to include
         extra_args=[

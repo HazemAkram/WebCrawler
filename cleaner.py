@@ -575,6 +575,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         for band_idx, (start_ratio, end_ratio) in enumerate(bands, 1):
             # Extract and enhance band
             enhanced_band = enhance_image_region(img_cv, start_ratio, end_ratio)
+            enhanced_band.save(f"enhanced_band_{band_idx}.png")
                         
             # Perform OCR on band
             data_band = pytesseract.image_to_data(
@@ -1054,6 +1055,34 @@ def remove_qr_codes_from_pdf(images):
         gc.collect()
     return modified_images
 
+def remove_bottom_percentage(images, percentage=3.0):
+    """
+    Remove the bottom percentage of each page.
+    
+    Args:
+        images: List of PIL Images
+        percentage: Percentage of bottom to remove (default: 3.0)
+        
+    Returns:
+        List of PIL Images with bottom portion removed
+    """
+    modified_images = []
+    
+    for page_num, img in enumerate(images, 1):
+        width, height = img.size
+        
+        # Calculate how many pixels to remove from bottom
+        pixels_to_remove = int(height * (percentage / 100.0))
+        new_height = height - pixels_to_remove
+        
+        # Crop image: (left, top, right, bottom)
+        # Remove bottom portion by cropping from top
+        cropped_img = img.crop((0, 0, width, new_height))
+        modified_images.append(cropped_img)
+        
+        print(f"   📄 Page {page_num}: Removed bottom {percentage}% ({pixels_to_remove}px)")
+    
+    return modified_images
 
 def pdf_processing(file_path: str, api_key: str, log_callback=None):
     """
@@ -1110,6 +1139,10 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         print("🔍 Starting QR code removal...")
         final_images = remove_qr_codes_from_pdf(text_removed)
         log_message("✅ QR code removal completed", "INFO")
+
+        print("✂️ Removing bottom 3% of pages...")
+        final_images = remove_bottom_percentage(final_images, percentage=3.0)
+        log_message("✅ Bottom portion removal completed", "INFO")
         
         # Add cover page with smart resizing
         if os.path.exists("cover.png"):

@@ -294,7 +294,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         
                         log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
                         
-                        BATCH_SIZE = 20  # Configurable: how many products to launch per batch
+                        BATCH_SIZE = 10  # Configurable: how many products to launch per batch
                         total_products = len(venues)
                         product_idx = 0
                         batch_num = 1

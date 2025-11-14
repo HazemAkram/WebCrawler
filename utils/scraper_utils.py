@@ -2338,6 +2338,21 @@ async def fetch_and_process_page_with_js(
 
 
     js_commands = f"""
+
+        try{{
+
+            await new Promise(r => setTimeout(r, 3000));
+            var btn2 = document.querySelector("button[id='didomi-notice-agree-button']");
+            if (btn2) {{
+                btn2.click();
+                console.log('[JS] Button clicked');
+                await new Promise(r => setTimeout(r, 3000));
+            }}
+        }} catch (error) {{
+            console.log('[JS] Error with button extraction:', error.message);
+        }}   
+
+
         console.log('[JS] Starting data extraction...');
         let allRowsData = [];
         const rowSelectors = '{", ".join(elements)}';

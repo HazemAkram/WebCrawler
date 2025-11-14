@@ -2256,6 +2256,8 @@ async def fetch_and_process_page(
         }} catch (error) {{
             console.log('[JS] Error with button extraction:', error.message);
         }}   
+        await new Promise(r => setTimeout(r, 5000));
+
     """
     # Debugging: Print the URL being fetched
     log_message(f"🔄 Crawling page {page_number} from URL: {url}", "INFO")    

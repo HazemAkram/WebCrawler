@@ -251,12 +251,7 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
 
         try{{
             var btn = document.querySelector("button.button--F1V85.select--bZS35");
-            var btn2 = document.querySelector("button[id='didomi-notice-agree-button']");
-            if (btn2) {{
-                btn2.click();
-                console.log('[JS] Button clicked');
-                await new Promise(r => setTimeout(r, 3000));
-            }}
+            
             if (btn) {{
                 btn.click();
                 console.log('[JS] Button clicked');

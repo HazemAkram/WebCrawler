@@ -1337,9 +1337,9 @@ async def download_pdf_links(
         os.makedirs(category_path, exist_ok=True)
         
         productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
-        # if not os.path.exists(productPath):
-        #     os.makedirs(productPath)
-        #     log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
+        if not os.path.exists(productPath):
+            os.makedirs(productPath)
+            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
 
         # Step 3: Split extracted files into PDFs and other file types
         pdf_docs = []

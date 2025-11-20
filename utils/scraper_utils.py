@@ -1042,7 +1042,7 @@ async def download_pdfs_via_playwright(
                         
                         # Click and wait for potential download
                         try:
-                            async with page.expect_download(timeout=15000) as download_info:
+                            async with page.expect_download(timeout=30000) as download_info:
                                 await element.click()
                                 # Wait a bit for download to start
                                 await page.wait_for_timeout(1000)

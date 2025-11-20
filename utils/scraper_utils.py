@@ -1336,7 +1336,7 @@ async def download_pdf_links(
         category_path = os.path.join(output_folder, sanitized_cat_name)
         os.makedirs(category_path, exist_ok=True)
         
-        # productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
+        productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
         # if not os.path.exists(productPath):
         #     os.makedirs(productPath)
         #     log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")

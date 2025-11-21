@@ -1140,9 +1140,9 @@ def pdf_processing(file_path: str, api_key: str, log_callback=None):
         final_images = remove_qr_codes_from_pdf(text_removed)
         log_message("✅ QR code removal completed", "INFO")
 
-        print("✂️ Removing bottom 3% of pages...")
-        final_images = remove_bottom_percentage(final_images, percentage=3.0)
-        log_message("✅ Bottom portion removal completed", "INFO")
+        # print("✂️ Removing bottom 3% of pages...")
+        # final_images = remove_bottom_percentage(final_images, percentage=3.0)
+        # log_message("✅ Bottom portion removal completed", "INFO")
         
         # Add cover page with smart resizing
         if os.path.exists("cover.png"):

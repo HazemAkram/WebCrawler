@@ -1832,7 +1832,7 @@ def detect_pagination_type(url: str) -> str:
         
         # Check query parameters
         pagination_params = {
-            'page': ['page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber', 'currentPage'],
+            'currentPage': ['p', 'pg', 'page_num', 'page_number', 'pageNumber', 'currentPage','page'],
             'offset': ['offset'],
             'start': ['start'],
             'skip': ['skip'],
@@ -2017,12 +2017,12 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
         else:
             # Remove any existing pagination parameters
             pagination_params_to_remove = [
-                'page', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
+                'currentPage', 'p', 'pg', 'page_num', 'page_number', 'pageNumber',
                 'offset', 'start', 'skip', 'from',
                 'limit', 'size', 'per_page', 'items_per_page',
                 'cursor', 'after', 'before', 'next', 'prev',
-                'page_id', 'pageid', 'pageno', 'pagenum', 'currentPage'
-            ]
+                'page_id', 'pageid', 'pageno', 'pagenum','page'
+                ]
             
             # Find and remove existing pagination parameter
             existing_pagination_param = None
@@ -2033,8 +2033,8 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
                     break
             
             # Calculate pagination values based on type
-            if pagination_type in ["page", "p", "pg", "page_num", "page_number", "pageNumber", "currentPage"]:
-                query_params['page'] = [str(page_number)]
+            if pagination_type in [ "currentPage","p", "pg", "page_num", "page_number", "pageNumber","page"]:
+                query_params[str(pagination_type)] = [str(page_number)]
             elif pagination_type == "offset":
                 # Calculate offset based on page number
                 offset_value = (page_number - 1) * items_per_page
@@ -2062,7 +2062,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
                 query_params['before'] = [str(page_number * items_per_page)]
             else:
                 # Default to page-based pagination
-                query_params['page'] = [str(page_number)]
+                query_params[str(pagination_type)] = [str(page_number)]
             
             # Reconstruct the URL
             new_query = urlencode(query_params, doseq=True)

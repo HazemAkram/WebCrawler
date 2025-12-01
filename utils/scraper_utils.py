@@ -250,7 +250,7 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
     return f"""
 
         try{{
-            var btn = document.querySelector("button.button--F1V85.select--bZS35");
+            var btn = document.querySelectorAll("div.Collapsible_trigger__eN27y")[3];
             
             if (btn) {{
                 btn.click();
@@ -1342,6 +1342,7 @@ async def download_pdf_links(
             log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
 
         # Step 3: Split extracted files into PDFs and other file types
+        # and apply per-type limits with strong language preference (EN first).
         pdf_docs = []
         other_docs = []
         seen_urls_in_page = set()
@@ -1349,6 +1350,8 @@ async def download_pdf_links(
         allowed_types = set(t.lower() for t in pdf_cfg.get("allowed_types", [])) if pdf_cfg else set()
         per_type_limits = {k.lower(): v for k, v in (pdf_cfg.get("per_type_limits", {}) or {}).items()}
         per_type_counts: dict[str, int] = {}
+        # Collect all candidates first so we can re-order within each type by language & priority
+        candidates: list[dict] = []
 
         # with open("extracted_data.json", "w", encoding="utf-8") as f:
         #     json.dump(extracted_data, f, ensure_ascii=False, indent=4)
@@ -1376,40 +1379,27 @@ async def download_pdf_links(
             if allowed_types and item_type_lc not in allowed_types:
                 log_message(f"⏭️ Skipping disallowed type: {item_type}", "INFO")
                 continue
-            # Per-type limit enforcement
-            limit = per_type_limits.get(item_type_lc)
-            if limit is not None:
-                count = per_type_counts.get(item_type_lc, 0)
-                if count >= limit:
-                    log_message(f"📊 Skipping '{item_type}' (per-type limit {limit} reached)", "INFO")
-                    continue
-            # Classify as PDF or other
-            if is_pdf_extension(ext):
-                pdf_docs.append(item)
-                per_type_counts[item_type_lc] = per_type_counts.get(item_type_lc, 0) + 1
-                log_message(f"✅ Accepted PDF: {item.get('type', 'Unknown')} - {item.get('text', 'Unknown')}", "INFO")
-            else:
-                other_docs.append(item)
-                per_type_counts[item_type_lc] = per_type_counts.get(item_type_lc, 0) + 1
-                file_type = item.get('type', 'Unknown')
-                log_message(f"✅ Accepted {ext.upper() if ext else 'file'}: {file_type} - {item.get('text', 'Unknown')}", "INFO")
 
-        # Check if any files were found
-        total_files = len(pdf_docs) + len(other_docs)
-        if total_files == 0:
-            log_message(f"📭 No files found on page for product: {derived_product_name}", "INFO")
-            log_message(f"🔗 Product URL: {product_url}", "INFO")
-            return {"productLink": product_url, "productName": derived_product_name, "category": cat_name, "saved_count": 0, "has_datasheet": False}
-
-        log_message(f"📄 Found {len(pdf_docs)} PDF(s) and {len(other_docs)} other file(s) for product: {derived_product_name}", "INFO")
+            # Store as candidate; we'll apply per-type limits *after* we sort by language/priority
+            candidates.append({
+                "item": item,
+                "ext": ext,
+                "type_lc": item_type_lc,
+                "type_label": item_type,
+            })
 
         # Enhanced sorting: Priority first, then by document type preference, then by language
-        def sort_key(doc):
+        def sort_key(doc: dict):
+            """
+            Sorting key applied to the LLM-extracted document dict.
+            Priority (High/Medium/Low) > document type (Data Sheet > Drawing > Manual > CAD > others) > language (EN > DE > TR > others).
+            """
+            # Priority first
             priority_score = {'High': 3, 'Medium': 2, 'Low': 1}.get(doc.get('priority', 'Unknown'), 0)
             
             # Type preference: Data Sheet > Technical Drawing > Manual > CAD > Others
             type_score = 0
-            doc_type = doc.get('type', '').lower()
+            doc_type = (doc.get('type') or '').lower()
             if 'data sheet' in doc_type or 'datasheet' in doc_type or 'specification' in doc_type:
                 type_score = 4
             elif 'drawing' in doc_type or 'dimensional' in doc_type:
@@ -1419,19 +1409,66 @@ async def download_pdf_links(
             elif 'cad' in doc_type or 'step' in doc_type or 'iges' in doc_type or 'dwg' in doc_type:
                 type_score = 1
             
-            # Language preference: English > German > Turkish > Others
-            language_score = 0
-            doc_language = doc.get('language', '').lower()
-            if 'english' in doc_language:
-                language_score = 4
-            elif 'german' in doc_language or 'deutsch' in doc_language:
-                language_score = 3
-            elif 'turkish' in doc_language or 'türkçe' in doc_language:
-                language_score = 2
-            else:
-                language_score = 1
+            # Language preference: English > German > Turkish > Others (based on normalized code)
+            lang_code = normalize_language_code(doc.get('language', 'Unknown'))
+            language_score_map = {
+                "EN": 4,
+                "DE": 3,
+                "TR": 2,
+            }
+            language_score = language_score_map.get(lang_code, 1)
             
             return (priority_score, type_score, language_score)
+
+        # Apply per-type limits with language-aware ordering
+        if candidates:
+            # Group candidates by semantic type
+            from collections import defaultdict
+            grouped_by_type: dict[str, list[dict]] = defaultdict(list)
+            for c in candidates:
+                grouped_by_type[c["type_lc"]].append(c)
+
+            for type_lc, docs in grouped_by_type.items():
+                item_type_label = docs[0]["type_label"] if docs else type_lc
+                limit = per_type_limits.get(type_lc)
+
+                # Sort documents of this type using the enhanced sort_key on the underlying LLM doc
+                docs.sort(key=lambda c: sort_key(c["item"]), reverse=True)
+
+                # Enforce per-type limit after sorting so that preferred language/docs are kept
+                count = 0
+                for c in docs:
+                    if limit is not None and count >= limit:
+                        log_message(f"📊 Skipping '{item_type_label}' (per-type limit {limit} reached with language-aware ordering)", "INFO")
+                        continue
+
+                    item = c["item"]
+                    ext = c["ext"]
+
+                    if is_pdf_extension(ext):
+                        pdf_docs.append(item)
+                    else:
+                        other_docs.append(item)
+
+                    per_type_counts[type_lc] = per_type_counts.get(type_lc, 0) + 1
+                    count += 1
+
+                    file_type = item.get('type', 'Unknown')
+                    file_text = item.get('text', 'Unknown')
+                    lang = item.get('language', 'Unknown')
+                    if is_pdf_extension(ext):
+                        log_message(f"✅ Accepted PDF: {file_type} ({lang}) - {file_text}", "INFO")
+                    else:
+                        log_message(f"✅ Accepted {ext.upper() if ext else 'file'}: {file_type} ({lang}) - {file_text}", "INFO")
+
+        # Check if any files were found
+        total_files = len(pdf_docs) + len(other_docs)
+        if total_files == 0:
+            log_message(f"📭 No files found on page for product: {derived_product_name}", "INFO")
+            log_message(f"🔗 Product URL: {product_url}", "INFO")
+            return {"productLink": product_url, "productName": derived_product_name, "category": cat_name, "saved_count": 0, "has_datasheet": False}
+
+        log_message(f"📄 Found {len(pdf_docs)} PDF(s) and {len(other_docs)} other file(s) for product: {derived_product_name}", "INFO")
 
         # Sort PDFs by priority
         pdf_docs.sort(key=sort_key, reverse=True)
@@ -1832,7 +1869,7 @@ def detect_pagination_type(url: str) -> str:
         
         # Check query parameters
         pagination_params = {
-            'currentPage': ['p', 'pg', 'page_num', 'page_number', 'pageNumber', 'currentPage','page'],
+            'page': ['p', 'pg', 'page_num', 'page_number', 'pageNumber', 'currentPage','page'],
             'offset': ['offset'],
             'start': ['start'],
             'skip': ['skip'],
@@ -2033,7 +2070,7 @@ def append_page_param(base_url: str, page_number: int, pagination_type: str = "a
                     break
             
             # Calculate pagination values based on type
-            if pagination_type in [ "currentPage","p", "pg", "page_num", "page_number", "pageNumber","page"]:
+            if pagination_type in [ "page","currentPage","p", "pg", "page_num", "page_number", "pageNumber","page"]:
                 query_params[str(pagination_type)] = [str(page_number)]
             elif pagination_type == "offset":
                 # Calculate offset based on page number
@@ -2190,6 +2227,7 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             " and anchors for downloadable technical documents and CAD files.\n"
             "Extract all technical PDFs, especially: Data Sheet, Installation Guide, Technical Drawing, Catalog, User Manual, and info cards.\n"
             "Your output MUST INCLUDE Installation Guides or instructions if present, as well as Data Sheets, Technical Drawings, User Manuals, Mounting Instructions, and any kind of setup, commissioning, or installation document, even if the label is a variant (e.g., 'Install Guide', 'Setup Manual', 'Mounting Guide', 'Assembly Instructions', 'Commissioning Guide', 'Start-up Guide', etc).\n"
+            "The high priority files are: English Data Sheets, Installation Guides, Technical Drawings, User Manuals, Mounting Instructions, and any kind of setup, commissioning, or installation document.\n"
             "For each document, output: url, text, type, language, priority.\n"
             "- url: absolute link to the file. Convert relative links using the page domain.\n"
             "    - Do not add any escape characters to the url.\n"
@@ -2329,10 +2367,14 @@ async def fetch_and_process_page_with_js(
     seen_names: set,
 ) -> Tuple[list, bool]:
     """
-    JS-based extraction for sites with dynamic pagination. Extracts product rows using JS, then applies LLM extraction per page.
+    JS-based extraction for sites with dynamic pagination (including \"Load more\" buttons).
+    Extracts product rows client-side using JS, then applies LLM extraction per page.
     Returns (venues, no_results) just like fetch_and_process_page.
     """
 
+    # Read JS safety limits from configuration / environment with sensible fallbacks
+    max_js_pages = int(os.getenv("MAX_JS_PAGINATION_PAGES", DEFAULT_CONFIG.get("crawler_settings", {}).get("max_js_pagination_pages", 500)))
+    max_js_clicks = int(os.getenv("MAX_JS_PAGINATION_CLICKS", DEFAULT_CONFIG.get("crawler_settings", {}).get("max_js_pagination_clicks", 100)))
 
     js_commands = f"""
 
@@ -2354,9 +2396,10 @@ async def fetch_and_process_page_with_js(
         let allRowsData = [];
         const rowSelectors = '{", ".join(elements)}';
         const buttonSelector = '{button_selector}';
-        const maxPages = 500;
+        const maxPages = {max_js_pages};
         let currentPage = 1;
-
+        let totalClicks = 0;
+        const maxClicks = {max_js_clicks}; // safety cap in JS layer (also configurable in Python)
 
         // Helper function to extract rows
         function extractRows() {{
@@ -2370,7 +2413,7 @@ async def fetch_and_process_page_with_js(
             return pageData;
         }}
 
-        // Always extract first page
+        // Always extract first page before any clicking
         allRowsData.push({{
             page: currentPage,
             data: extractRows()
@@ -2380,38 +2423,47 @@ async def fetch_and_process_page_with_js(
         await new Promise(r => setTimeout(r, 3000));
         // Only attempt pagination if valid button selector exists
         if (buttonSelector && buttonSelector.trim() !== '') {{
-            console.log('[JS] Pagination detected. Starting automatic pagination...');
+            console.log('[JS] Pagination / load-more detected. Starting automatic pagination...');
             let nextButton = document.querySelector(buttonSelector);
-            
-            let lastPageData = allRowsData[0].data;
-            while (currentPage < maxPages && nextButton && nextButton.offsetParent !== null && !nextButton.disabled) {{
-                // Click to load next page
+
+            // Track last known product count to detect when no new products are added
+            let lastTotalCount = allRowsData[0].data.length;
+
+            while (
+                currentPage < maxPages &&
+                totalClicks < maxClicks &&
+                nextButton &&
+                nextButton.offsetParent !== null &&
+                !nextButton.disabled
+            ) {{
+                // Click to load next page or more products
                 nextButton.click();
-                console.log(`[JS] Clicked page ${{currentPage}}`);
+                totalClicks += 1;
+                console.log(`[JS] Clicked pagination button #${{totalClicks}} (logical page ${{currentPage}})`);
                 currentPage++;
-                
+
                 // Wait for new content to load
                 await new Promise(r => setTimeout(r, 9000));
-                
-                // Extract new page data
-                const newPageData = extractRows()
+
+                // Extract snapshot after click
+                const newPageData = extractRows();
+                const newTotalCount = newPageData.length;
 
                 allRowsData.push({{
                     page: currentPage,
                     data: newPageData
                 }});
-                console.log(`[JS] Extracted page ${{currentPage}} with ${{newPageData.length}} rows`);
+                console.log(`[JS] Snapshot after click #${{totalClicks}} (logical page ${{currentPage}}) with ${{newPageData.length}} rows`);
 
-                if(newPageData.length !== lastPageData.length){{
-                    console.log('[JS] No new data found. Stopping pagination.');
+                // Stopping condition for load-more: no increase in total rows
+                if (newTotalCount <= lastTotalCount) {{
+                    console.log('[JS] No new products detected (row count did not increase). Stopping pagination.');
                     break;
                 }}
-                
-                // Update button reference after DOM changes
-                nextButton = document.querySelector(buttonSelector);
 
-                // Update lastPageData
-                lastPageData = newPageData;
+                // Update counters and button reference after DOM changes
+                lastTotalCount = newTotalCount;
+                nextButton = document.querySelector(buttonSelector);
             }}
             console.log('[JS] Pagination complete');
         }} else {{

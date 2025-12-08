@@ -13,6 +13,8 @@ import random
 import os
 import sys
 import gc
+import aiohttp
+import json
 
 # Add the current directory to the path so we can import our modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -33,7 +35,8 @@ from utils.scraper_utils import (
     fetch_and_process_page_with_js,
     get_page_number,
     detect_pagination_type,
-    sanitize_folder_name
+    sanitize_folder_name,
+    fetch_products_from_api
 )
 
 load_dotenv()
@@ -61,25 +64,70 @@ def read_sites_from_csv(input_file):
     sites = []
     with open(input_file, encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=',')
+        count = 2
         for row in reader:
-            css_list = [s.strip() for s in row['css_selector'].split('|') if s.strip()] if row.get('css_selector') else []
-            pdf_list = [s.strip() for s in row['pdf_selector'].split('|') if s.strip()] if row.get('pdf_selector') else []
-            # Optional name selector to extract product name on product page
-            name_selector = row.get('name_selector', '').strip()
-            if name_selector:
-                # Ensure name selector is available to the PDF LLM by adding it to the target elements list
-                pdf_list.append(name_selector)
-
-            # PDF button selector for browser-triggered downloads
+            print(f"Row number {count} is being processed")
+            count += 1
+            
+            # Check if this is API-based (domain_name) or HTML-based (url) input
+            domain_name = row.get('domain_name', '').strip()
+            url = row.get('url', '').strip()
+            
+            # Determine crawling mode
+            if domain_name and not url:
+                # API-based mode: fetch products from API
+                mode = "api"
+                log_message(f"   📡 Row {count-1}: API mode detected for domain '{domain_name}'", "INFO")
+            elif url:
+                # HTML-based mode: traditional crawling
+                mode = "html"
+                log_message(f"   🌐 Row {count-1}: HTML mode detected for URL '{url}'", "INFO")
+            else:
+                log_message(f"   ⚠️ Row {count-1}: Skipping - neither domain_name nor url provided", "WARNING")
+                continue
+            
+            # Parse selectors (common to both modes)
+            pdf_list = [s.strip() for s in row.get('pdf_selector', '').split('|') if s.strip()]
             pdf_button_selector = row.get('pdf_button_selector', '').strip()
-            sites.append({
-                "url": row["url"],
-                "cat_name": row.get("cat_name", "Uncategorized"),
-                "css_selector": css_list,
-                "pdf_selector": pdf_list,
-                "button_selector": row.get("button_selector", ""),
-                "pdf_button_selector": pdf_button_selector,
-            })
+            
+            # ---- NEW (API PAGE RANGE) ----
+            page_number_raw = row.get('page_number', '').strip()
+            # Accept either a single page or a page range (e.g., '1' or '1-5')
+            if page_number_raw:
+                if '-' in page_number_raw:
+                    start_page, end_page = map(int, page_number_raw.split('-', 1))
+                else:
+                    start_page = int(page_number_raw)
+                    end_page = None
+            else:
+                start_page = 1
+                end_page = None
+            # Build site config based on mode
+            if mode == "api":
+                sites.append({
+                    "mode": "api",
+                    "domain_name": domain_name,
+                    "cat_name": row.get("cat_name", domain_name),
+                    "pdf_selector": pdf_list,
+                    "pdf_button_selector": pdf_button_selector,
+                    "start_page": start_page,
+                    "end_page": end_page,
+                })
+            else:  # html mode
+                css_list = [s.strip() for s in row.get('css_selector', '').split('|') if s.strip()]
+                name_selector = row.get('name_selector', '').strip()
+                if name_selector:
+                    pdf_list.append(name_selector)
+                
+                sites.append({
+                    "mode": "html",
+                    "url": url,
+                    "cat_name": row.get("cat_name", "Uncategorized"),
+                    "css_selector": css_list,
+                    "pdf_selector": pdf_list,
+                    "button_selector": row.get("button_selector", ""),
+                    "pdf_button_selector": pdf_button_selector,
+                })
     return sites
 
 async def cleanup_crawler_session(crawler, session_id):
@@ -193,6 +241,16 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     category_to_products = {}
     seen_links = set()
     
+    # Statistics tracking
+    stats = {
+        "api_mode_count": 0,
+        "html_mode_count": 0,
+        "api_products": 0,
+        "html_products": 0,
+        "api_domains": [],
+        "html_urls": []
+    }
+    
     # Concurrency control: limit parallel product processing
     # With 64GB RAM, we can handle 16-24 concurrent products safely
     MAX_CONCURRENT_PRODUCTS = int(os.environ.get('MAX_CONCURRENT_PRODUCTS', '20'))
@@ -219,11 +277,8 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                     log_message("Stop requested by user.", "WARNING")
                     break
 
-                url = site["url"]
-                css_selector = site["css_selector"]
-                button_selector = site["button_selector"]
-                
-                log_message(f"--- Crawling site {index+1}/{len(sites)} ---", "INFO")
+                mode = site.get("mode", "html")
+                log_message(f"--- Crawling site {index+1}/{len(sites)} (Mode: {mode.upper()}) ---", "INFO")
                 
                 # Update status for web interface
                 if status_callback:
@@ -232,139 +287,267 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                         'current_page': 1
                     })
 
-                parsed = urlparse(url)
-                domain_name = parsed.netloc
-                log_message(f"Domain: {domain_name}", "INFO")
-                print(f"Domain: {domain_name}")
+                # Dispatch based on mode
+                if mode == "api":
+                    # API-based product fetching (now page-wise)
+                    domain_name = site["domain_name"]
+                    log_message(f"📡 API Mode: Fetching products for domain '{domain_name}'", "INFO")
+                    stats["api_mode_count"] += 1
+                    stats["api_domains"].append(domain_name)
 
-                # Enhanced pagination handling
-                page_number = get_page_number(url)
-                # if page_number is None:
-                #     page_number = 9999  # Start from page 1 if no page number found
-                
-                # Detect pagination type for better handling
-                pagination_type = detect_pagination_type(url)
-                log_message(f"🔍 Detected pagination type: {pagination_type}", "INFO")
-                
-                async with AsyncWebCrawler(config=browser_config) as crawler:
-                    while True:
-                        # Check if stop is requested
-                        if stop_requested_callback and stop_requested_callback():
-                            log_message("Stop requested by user.", "WARNING")
-                            break
+                    start_page = site.get("start_page", 1)
+                    end_page = site.get("end_page")
+                    cur_page = start_page
+                    total_api_products = 0
+                    async with aiohttp.ClientSession() as api_session:
+                        while True:
+                            if end_page and cur_page > end_page:
+                                break
+                            url = f"https://factory-help.online/prods/json?domain={domain_name}&page={cur_page}"
+                            log_message(f"🟦 [API] Fetching page {cur_page} for domain '{domain_name}'", "INFO")
+                            try:
+                                async with api_session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                                    if response.status != 200:
+                                        log_message(f"⚠️ API returned status {response.status} for {domain_name} page {cur_page}", "WARNING")
+                                        break
+                                    data = await response.json()
+                                    if not data or not isinstance(data, list) or len(data) == 0:
+                                        log_message(f"✅ No products or end of pagination for domain '{domain_name}' at page {cur_page}", "INFO")
+                                        break
+                                    page_venues = []
+                                    for item in data:
+                                        name = item.get("name", "").strip()
+                                        source_url = item.get("source_url", "").strip()
+                                        if name and source_url:
+                                            page_venues.append({
+                                                "productName": name,
+                                                "productLink": source_url,
+                                            })
+                                        else:
+                                            log_message(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")
+                                    if not page_venues:
+                                        log_message(f"✅ No valid products on page {cur_page} for '{domain_name}'", "INFO")
+                                        break
+                                    stats["api_products"] += len(page_venues)
+                                    total_api_products += len(page_venues)
+                                    log_message(f"✅ Fetched {len(page_venues)} products from API page {cur_page} for '{domain_name}'", "SUCCESS")
+                                    # Process batch as before
+                                    BATCH_SIZE = 1
+                                    total_products = len(page_venues)
+                                    product_idx = 0
+                                    batch_num = 1
+                                    while product_idx < total_products:
+                                        batch_venues = page_venues[product_idx : product_idx + BATCH_SIZE]
+                                        log_message(f"⚡ [API] Processing batch {batch_num} (page {cur_page}, {len(batch_venues)} products)", "INFO")
+                                        product_tasks = [
+                                            process_single_product(
+                                                venue=venue,
+                                                site=site,
+                                                browser_config=browser_config,
+                                                pdf_llm_strategy=pdf_llm_strategy,
+                                                regex_strategy=regex_strategy,
+                                                api_key=api_key,
+                                                session_id=session_id,
+                                                domain_name=domain_name,
+                                                semaphore=product_semaphore,
+                                                stop_requested_callback=stop_requested_callback
+                                            )
+                                            for venue in batch_venues
+                                        ]
+                                        summaries = await asyncio.gather(*product_tasks, return_exceptions=True)
+                                        for summary in summaries:
+                                            if isinstance(summary, Exception):
+                                                log_message(f"❌ Product processing raised exception: {str(summary)}", "ERROR")
+                                            elif summary:
+                                                cat_summaries.append(summary)
+                                        log_message(f"✅ [API] Completed batch {batch_num} ({min(product_idx+BATCH_SIZE, total_products)}/{total_products} products) on page {cur_page}", "INFO")
+                                        product_idx += BATCH_SIZE
+                                        batch_num += 1
+                                        if product_idx < total_products:
+                                            await asyncio.sleep(5)
+                                    log_message(f"✅ [API] Completed all batches for {len(page_venues)} products on page {cur_page}", "INFO")
+                                    for v in page_venues:
+                                        v["category"] = site["cat_name"]
+                                        category_to_products.setdefault(site["cat_name"], []).append(v)
+                                    all_venues.extend(page_venues)
+                                    if status_callback:
+                                        status_callback({
+                                            'total_venues': len(all_venues),
+                                            'current_page': cur_page
+                                        })
+                            except asyncio.TimeoutError:
+                                log_message(f"⏱️ Timeout fetching page {cur_page} for {domain_name}", "ERROR")
+                                break
+                            except aiohttp.ClientError as e:
+                                log_message(f"❌ Network error fetching page {cur_page} for {domain_name}: {str(e)}", "ERROR")
+                                break
+                            except json.JSONDecodeError as e:
+                                log_message(f"❌ Invalid JSON response for page {cur_page} of {domain_name}: {str(e)}", "ERROR")
+                                break
+                            except Exception as e:
+                                log_message(f"❌ Unexpected error fetching page {cur_page} for {domain_name}: {str(e)}", "ERROR")
+                                break
+                            cur_page += 1
+                    log_message(f"✅ [API] Fetched and processed {total_api_products} total products for '{domain_name}'", "SUCCESS")
+                    
+                    # Tag venues with category
+                    for v in all_venues:
+                        v["category"] = site["cat_name"]
+                        category_to_products.setdefault(site["cat_name"], []).append(v)
+                    all_venues.extend(all_venues) # This line seems redundant, but keeping as per original
+                    
+                    # Update total venues count
+                    if status_callback:
+                        status_callback({
+                            'total_venues': len(all_venues)
+                        })
+                    
+                else:
+                    # HTML-based crawling (legacy mode)
+                    url = site["url"]
+                    css_selector = site["css_selector"]
+                    button_selector = site["button_selector"]
+                    
+                    log_message(f"🌐 HTML Mode: Crawling URL '{url}'", "INFO")
+                    
+                    # Track HTML mode usage
+                    stats["html_mode_count"] += 1
+                    stats["html_urls"].append(url)
 
-                        if button_selector:
-                            # For button-based pagination, use the current URL
-                            paged_url = url
-                            log_message(f"🔄 Crawling URL with JS pagination: {paged_url} (page {page_number})", "INFO")
-                            # Use JS-based extraction
-                            venues, no_results = await fetch_and_process_page_with_js(
-                                crawler=crawler,
-                                page_url=paged_url,
-                                llm_strategy=llm_strategy,
-                                button_selector=button_selector,
-                                elements=css_selector,
-                                required_keys=REQUIRED_KEYS,
-                                seen_names=seen_links,
-                            )
-                        else:
-                            # For URL-based pagination, construct the paged URL
-                            paged_url = append_page_param(url, page_number, pagination_type)
-                            log_message(f"🔄 Crawling URL with {pagination_type} pagination: {paged_url} (page {page_number})", "INFO")
-                            # Use standard extraction
-                            venues, no_results = await fetch_and_process_page(
-                                crawler = crawler,
-                                css_selector = css_selector,
-                                page_number = page_number,
-                                url = paged_url,
-                                llm_strategy = llm_strategy,
-                                session_id = f"{session_id}_{page_number}",
-                                required_keys = REQUIRED_KEYS,
-                                seen_names = seen_links,
-                            )
+                    parsed = urlparse(url)
+                    domain_name = parsed.netloc
+                    log_message(f"Domain: {domain_name}", "INFO")
+                    print(f"Domain: {domain_name}")
 
-                        if no_results or not venues:
-                            log_message(f"🏁 Stopping pagination - no more results on page {page_number}", "INFO")
-                            break
-                        
-                        # Process products in parallel with controlled concurrency
-                        if stop_requested_callback and stop_requested_callback():
-                            log_message("Stop requested by user.", "WARNING")
-                            break
-                        
-                        log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
-                        
-                        BATCH_SIZE = 8  # Configurable: how many products to launch per batch
-                        total_products = len(venues)
-                        product_idx = 0
-                        batch_num = 1
-                        while product_idx < total_products:
-                            batch_venues = venues[product_idx : product_idx + BATCH_SIZE]
-                            log_message(f"⚡ Processing batch {batch_num} ({len(batch_venues)} products)", "INFO")
+                    # Enhanced pagination handling
+                    page_number = get_page_number(url)
+                    
+                    # Detect pagination type for better handling
+                    pagination_type = detect_pagination_type(url)
+                    log_message(f"🔍 Detected pagination type: {pagination_type}", "INFO")
+                    
+                    async with AsyncWebCrawler(config=browser_config) as crawler:
+                        while True:
+                            # Check if stop is requested
+                            if stop_requested_callback and stop_requested_callback():
+                                log_message("Stop requested by user.", "WARNING")
+                                break
 
-                            product_tasks = [
-                                process_single_product(
-                                    venue=venue,
-                                    site=site,
-                                    browser_config=browser_config,
-                                    pdf_llm_strategy=pdf_llm_strategy,
-                                    regex_strategy=regex_strategy,
-                                    api_key=api_key,
-                                    session_id=session_id,
-                                    domain_name=domain_name,
-                                    semaphore=product_semaphore,
-                                    stop_requested_callback=stop_requested_callback
+                            if button_selector:
+                                # For button-based pagination, use the current URL
+                                paged_url = url
+                                log_message(f"🔄 Crawling URL with JS pagination: {paged_url} (page {page_number})", "INFO")
+                                # Use JS-based extraction
+                                venues, no_results = await fetch_and_process_page_with_js(
+                                    crawler=crawler,
+                                    page_url=paged_url,
+                                    llm_strategy=llm_strategy,
+                                    button_selector=button_selector,
+                                    elements=css_selector,
+                                    required_keys=REQUIRED_KEYS,
+                                    seen_names=seen_links,
                                 )
-                                for venue in batch_venues
-                            ]
+                            else:
+                                # For URL-based pagination, construct the paged URL
+                                paged_url = append_page_param(url, page_number, pagination_type)
+                                log_message(f"🔄 Crawling URL with {pagination_type} pagination: {paged_url} (page {page_number})", "INFO")
+                                # Use standard extraction
+                                venues, no_results = await fetch_and_process_page(
+                                    crawler = crawler,
+                                    css_selector = css_selector,
+                                    page_number = page_number,
+                                    url = paged_url,
+                                    llm_strategy = llm_strategy,
+                                    session_id = f"{session_id}_{page_number}",
+                                    required_keys = REQUIRED_KEYS,
+                                    seen_names = seen_links,
+                                )
 
-                            summaries = await asyncio.gather(*product_tasks, return_exceptions=True)
-                            for summary in summaries:
-                                if isinstance(summary, Exception):
-                                    log_message(f"❌ Product processing raised exception: {str(summary)}", "ERROR")
-                                elif summary:
-                                    cat_summaries.append(summary)
+                            if no_results or not venues:
+                                log_message(f"🏁 Stopping pagination - no more results on page {page_number}", "INFO")
+                                break
+                            
+                            # Process products in parallel with controlled concurrency
+                            if stop_requested_callback and stop_requested_callback():
+                                log_message("Stop requested by user.", "WARNING")
+                                break
+                            
+                            log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
+                            
+                            BATCH_SIZE = 1  # Configurable: how many products to launch per batch
+                            total_products = len(venues)
+                            product_idx = 0
+                            batch_num = 1
+                            while product_idx < total_products:
+                                batch_venues = venues[product_idx : product_idx + BATCH_SIZE]
+                                log_message(f"⚡ Processing batch {batch_num} ({len(batch_venues)} products)", "INFO")
 
-                            log_message(f"✅ Completed batch {batch_num} ({product_idx+BATCH_SIZE if product_idx+BATCH_SIZE < total_products else total_products}/{total_products} products)", "INFO")
-                            product_idx += BATCH_SIZE
-                            batch_num += 1
-                            if product_idx < total_products:
-                                await asyncio.sleep(5)  # Brief pause between batches
-                        
-                        log_message(f"✅ Completed all batches for {len(venues)} products", "INFO")
+                                product_tasks = [
+                                    process_single_product(
+                                        venue=venue,
+                                        site=site,
+                                        browser_config=browser_config,
+                                        pdf_llm_strategy=pdf_llm_strategy,
+                                        regex_strategy=regex_strategy,
+                                        api_key=api_key,
+                                        session_id=session_id,
+                                        domain_name=domain_name,
+                                        semaphore=product_semaphore,
+                                        stop_requested_callback=stop_requested_callback
+                                    )
+                                    for venue in batch_venues
+                                ]
 
-                        # Tag venues with category and collect for CSV export
-                        for v in venues:
-                            v["category"] = site["cat_name"]
-                            category_to_products.setdefault(site["cat_name"], []).append(v)
-                        all_venues.extend(venues)
-                        
-                        # Update total venues count for web interface
-                        if status_callback:
-                            status_callback({
-                                'total_venues': len(all_venues)
-                            })
+                                summaries = await asyncio.gather(*product_tasks, return_exceptions=True)
+                                for summary in summaries:
+                                    if isinstance(summary, Exception):
+                                        log_message(f"❌ Product processing raised exception: {str(summary)}", "ERROR")
+                                    elif summary:
+                                        cat_summaries.append(summary)
+
+                                log_message(f"✅ Completed batch {batch_num} ({product_idx+BATCH_SIZE if product_idx+BATCH_SIZE < total_products else total_products}/{total_products} products)", "INFO")
+                                product_idx += BATCH_SIZE
+                                batch_num += 1
+                                if product_idx < total_products:
+                                    await asyncio.sleep(5)  # Brief pause between batches
+                            
+                            log_message(f"✅ Completed all batches for {len(venues)} products", "INFO")
+
+                            # Track HTML products count
+                            stats["html_products"] += len(venues)
+                            
+                            # Tag venues with category and collect for CSV export
+                            for v in venues:
+                                v["category"] = site["cat_name"]
+                                category_to_products.setdefault(site["cat_name"], []).append(v)
+                            all_venues.extend(venues)
+                            
+                            # Update total venues count for web interface
+                            if status_callback:
+                                status_callback({
+                                    'total_venues': len(all_venues)
+                                })
 
 
-                        if page_number is not None:
-                        # Increment page number for next iteration
-                            page_number += 1
-                        
-                        # Update current page for web interface
-                        if status_callback:
-                            status_callback({
-                                'current_page': page_number
-                            })
-                        
-                        await asyncio.sleep(random.uniform(3, 15))  # Be polite
+                            if page_number is not None:
+                            # Increment page number for next iteration
+                                page_number += 1
+                            
+                            # Update current page for web interface
+                            if status_callback:
+                                status_callback({
+                                    'current_page': page_number
+                                })
+                            
+                            await asyncio.sleep(random.uniform(3, 15))  # Be polite
 
-                        if crawler is not None:
-                            log_message(f"🔄 Restarting Crawler to prevent resource exhaustion", "INFO")
-                            await crawler.close()
-                            await asyncio.sleep(2)
-                        crawler = AsyncWebCrawler(config=browser_config)
-                        await crawler.start()
-                        log_message("🚀 Fresh Crawler instance started", "INFO")
+                            if crawler is not None:
+                                log_message(f"🔄 Restarting Crawler to prevent resource exhaustion", "INFO")
+                                await crawler.close()
+                                await asyncio.sleep(2)
+                            crawler = AsyncWebCrawler(config=browser_config)
+                            await crawler.start()
+                            log_message("🚀 Fresh Crawler instance started", "INFO")
 
         # After finishing each site/category, cleanup and write per-category CSV
                 try:
@@ -401,6 +584,23 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
     log_message(f"PDF LLM strategy usage: {pdf_llm_strategy.show_usage()}", "INFO")
     log_message(f"LLM strategy usage: {llm_strategy.show_usage()}", "INFO")
     log_message(f"Crawling completed. Total venues processed: {len(all_venues)}", "SUCCESS")
+    
+    # Log pipeline statistics
+    log_message("=" * 60, "INFO")
+    log_message("📊 PIPELINE STATISTICS SUMMARY", "INFO")
+    log_message("=" * 60, "INFO")
+    log_message(f"🔹 API Mode Sites: {stats['api_mode_count']}", "INFO")
+    log_message(f"🔹 HTML Mode Sites: {stats['html_mode_count']}", "INFO")
+    log_message(f"📦 API Products Fetched: {stats['api_products']}", "INFO")
+    log_message(f"📦 HTML Products Crawled: {stats['html_products']}", "INFO")
+    log_message(f"📊 Total Products: {stats['api_products'] + stats['html_products']}", "INFO")
+    
+    if stats['api_domains']:
+        log_message(f"📡 API Domains Processed: {', '.join(stats['api_domains'])}", "INFO")
+    if stats['html_urls']:
+        log_message(f"🌐 HTML URLs Processed: {len(stats['html_urls'])} URL(s)", "INFO")
+    
+    log_message("=" * 60, "INFO")
 async def main():
     log_message(f"{'='*50} Starting crawling {'='*50}", "INFO")
     # here we should take the csv file name from the .env file to enable the third crawler

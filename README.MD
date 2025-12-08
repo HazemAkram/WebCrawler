@@ -31,11 +31,21 @@ The **AI Web Crawler** is a sophisticated, production-ready system that combines
 
 ## 🚀 Features
 
+### **Dual-Mode Product Discovery**
+- **API-Based Mode (Primary)**: Fast, reliable product fetching from centralized API
+  - Automatic pagination through all available products
+  - No need for CSS selectors or site-specific configuration
+  - Consistent data format across all domains
+  - Reduced server load and faster processing
+- **HTML Crawling Mode (Fallback)**: Traditional web scraping for non-API sites
+  - Multi-LLM Support: Groq, OpenAI, and Anthropic models
+  - Universal Compatibility: Works with any website layout
+  - Intelligent pagination detection and handling
+
 ### **AI-Powered Product Extraction**
-- **Multi-LLM Support**: Groq, OpenAI, and Anthropic models
-- **Universal Compatibility**: Works with any website layout without custom configuration
 - **Schema Validation**: Pydantic-based data validation ensures quality
 - **Duplicate Prevention**: Intelligent duplicate detection using name-based hashing
+- **Flexible Selectors**: Support for multiple CSS selectors with pipe-separated values
 
 ### **Advanced Pagination System**
 - **Multiple Types**: Page-based, offset-based, limit-offset, and cursor-based pagination
@@ -160,6 +170,15 @@ FLASK_APP_PASSWORD=your_app_password_here
 ### **Option 3: Command Line**
 
 1. **Prepare Input File** (`sites.csv`)
+   
+   **API-Based Mode (Recommended):**
+   ```csv
+   domain_name,cat_name,pdf_selector,pdf_button_selector
+   "festo.com","Festo Products","a.pdf-link","button.download-pdf"
+   "siemens.com","Siemens Products","div.pdf-download",""
+   ```
+   
+   **HTML-Based Mode (Legacy):**
    ```csv
    url,cat_name,css_selector,pdf_selector,name_selector,button_selector
    "https://example.com/products","Category A","div.product-item","a.pdf-link","h1.product-title","button.load-more"
@@ -172,16 +191,80 @@ FLASK_APP_PASSWORD=your_app_password_here
 
 ### **Input File Format**
 
-The CSV configuration file should contain:
+The crawler supports two modes of operation:
 
-| Column | Description | Example |
-|--------|-------------|---------|
-| `url` | Starting URL for product catalog | `https://example.com/products` |
-| `cat_name` | Category name for organization | `Butterfly Valves` |
-| `css_selector` | CSS selector for product elements | `div.product-item\|li.product-card` |
-| `pdf_selector` | CSS selector for PDF links | `a[href*=".pdf"]\|button.download` |
-| `name_selector` | CSS selector for product names | `h1.product-title` |
-| `button_selector` | CSS selector for pagination buttons | `button.load-more` |
+#### **API-Based Mode (Primary Method)**
+
+Fetches product information from a centralized API, providing faster and more reliable product discovery.
+
+| Column | Required | Description | Example |
+|--------|----------|-------------|---------|
+| `domain_name` | Yes | Domain name to fetch products for | `festo.com` |
+| `cat_name` | Optional | Category name for organization | `Butterfly Valves` |
+| `pdf_selector` | Yes | CSS selector for PDF links on product pages | `a[href*=".pdf"]\|button.download` |
+| `pdf_button_selector` | Optional | CSS selector for PDF download buttons | `button.download-pdf` |
+
+**API Endpoint:** `https://factory-help.online/prod/json?domain={domain_name}&page={page_num}`
+
+**How it works:**
+1. Crawler queries the API with the domain name
+2. API returns up to 500 products per page with `name` and `source_url`
+3. Crawler automatically paginates through all pages until empty response
+4. Each product page is then visited to download and process PDFs
+
+#### **HTML-Based Mode (Fallback Method)**
+
+Traditional web crawling approach for sites not in the API database.
+
+| Column | Required | Description | Example |
+|--------|----------|-------------|---------|
+| `url` | Yes | Starting URL for product catalog | `https://example.com/products` |
+| `cat_name` | Optional | Category name for organization | `Butterfly Valves` |
+| `css_selector` | Yes | CSS selector for product elements | `div.product-item\|li.product-card` |
+| `pdf_selector` | Yes | CSS selector for PDF links | `a[href*=".pdf"]\|button.download` |
+| `name_selector` | Optional | CSS selector for product names | `h1.product-title` |
+| `button_selector` | Optional | CSS selector for pagination buttons | `button.load-more` |
+
+**Note:** The crawler automatically detects which mode to use based on the CSV columns provided. If `domain_name` is present, API mode is used; if `url` is present, HTML mode is used.
+
+### **Example CSV Files**
+
+**API Mode Example** (`sites_api_example.csv`):
+```csv
+domain_name,cat_name,pdf_selector,pdf_button_selector
+festo.com,Festo Industrial Automation,a[href*='.pdf']|div.download-link,button.pdf-download
+siemens.com,Siemens Products,a.datasheet-link,
+abb.com,ABB Automation,div.pdf-container a,button[data-type='pdf']
+```
+
+**HTML Mode Example** (`sites.csv`):
+```csv
+url,cat_name,css_selector,pdf_selector,name_selector,button_selector
+https://example.com/products,Category A,div.product-item,a.pdf-link,h1.product-title,button.load-more
+```
+
+### **Pipeline Statistics**
+
+After crawling completes, the system provides detailed statistics:
+
+```
+============================================================
+📊 PIPELINE STATISTICS SUMMARY
+============================================================
+🔹 API Mode Sites: 3
+🔹 HTML Mode Sites: 1
+📦 API Products Fetched: 1,245
+📦 HTML Products Crawled: 89
+📊 Total Products: 1,334
+📡 API Domains Processed: festo.com, siemens.com, abb.com
+🌐 HTML URLs Processed: 1 URL(s)
+============================================================
+```
+
+This helps you understand:
+- Which discovery method was used for each site
+- Total products discovered per method
+- Performance comparison between API and HTML modes
 
 ---
 
@@ -191,28 +274,42 @@ The CSV configuration file should contain:
 
 ```mermaid
 graph TB
-    A[CSV Input] --> B[Web Crawler]
-    B --> C[LLM Extraction]
-    C --> D[Product Data]
-    D --> E[PDF Download]
-    E --> F[AI Processing]
-    F --> G[QR Code Removal]
-    G --> H[Text Cleaning]
-    H --> I[Final PDF]
+    A[CSV Input] --> B{Mode Detection}
+    B -->|API Mode| C[API Product Fetch]
+    B -->|HTML Mode| D[Web Crawler]
+    C --> E[Product List]
+    D --> F[LLM Extraction]
+    F --> E
+    E --> G[PDF Download]
+    G --> H[AI Processing]
+    H --> I[QR Code Removal]
+    I --> J[Text Cleaning]
+    J --> K[Final PDF]
     
-    J[Web Interface] --> B
-    K[Desktop GUI] --> B
-    L[Command Line] --> B
+    L[Web Interface] --> A
+    M[Desktop GUI] --> A
+    N[Command Line] --> A
 ```
 
 ### **Data Flow**
 
-1. **Input Processing**: CSV configuration parsed and validated
+#### **API Mode Flow (Primary)**
+1. **Input Processing**: CSV with domain names parsed
+2. **API Query**: Fetch products from centralized API with pagination
+3. **Product List**: Receive product names and URLs from API
+4. **PDF Discovery**: Visit each product page to find PDFs
+5. **Content Processing**: AI-powered cleaning and optimization
+6. **Output Generation**: Organized files and comprehensive reports
+
+#### **HTML Mode Flow (Fallback)**
+1. **Input Processing**: CSV with URLs and selectors parsed
 2. **Web Crawling**: Pages crawled using Crawl4AI framework
 3. **AI Extraction**: LLM extracts structured product data
 4. **PDF Discovery**: PDF links identified and downloaded
 5. **Content Processing**: AI-powered cleaning and optimization
 6. **Output Generation**: Organized files and comprehensive reports
+
+**Both modes converge** at the PDF processing stage, ensuring consistent output quality regardless of the discovery method.
 
 ### **Supported Models**
 
@@ -293,13 +390,29 @@ DEFAULT_CONFIG = {
 
 ### **Common Issues**
 
-#### **No Products Extracted**
+#### **API Mode Issues**
+
+**No Products Returned from API**
+- ✅ Verify domain name is correct (no `http://` or `www.` prefix)
+- ✅ Check API endpoint is accessible: `https://factory-help.online/prod/json?domain=example.com&page=1`
+- ✅ Ensure domain has products in the API database
+- ✅ Check network connectivity and firewall settings
+
+**API Timeout or Connection Errors**
+- ✅ Verify internet connection
+- ✅ Check if API endpoint is responding
+- ✅ Try increasing timeout in `fetch_products_from_api` function
+- ✅ Check for rate limiting from API server
+
+#### **HTML Mode Issues**
+
+**No Products Extracted**
 - ✅ Verify website accessibility
 - ✅ Check CSS selectors in CSV
-- ✅ Ensure API key is valid
+- ✅ Ensure API key is valid for LLM extraction
 - ✅ Test with JavaScript rendering disabled
 
-#### **Pagination Not Working**
+**Pagination Not Working**
 - ✅ Check URL format in input file
 - ✅ Verify button selectors for JS pagination
 - ✅ Try different pagination types
@@ -336,12 +449,26 @@ def get_browser_config() -> BrowserConfig:
 
 ### **Best Practices**
 
-- **Rate Limiting**: Respectful 3-15 second delays between requests
+- **Use API Mode When Possible**: 5-10x faster than HTML crawling, no LLM costs for product discovery
+- **Rate Limiting**: Respectful 3-15 second delays between requests (HTML mode)
 - **Session Management**: Efficient browser session handling
 - **Memory Management**: Automatic cleanup and garbage collection
 - **Duplicate Prevention**: Smart caching to avoid redundant processing
 - **Parallel Product Processing**: Up to 20 concurrent products (configurable)
 - **Safe PDF Deduplication**: Waits for cleaning before copying duplicates
+
+### **API Mode vs HTML Mode Performance**
+
+| Metric | API Mode | HTML Mode |
+|--------|----------|-----------|
+| **Speed** | ~500 products/request | ~10-50 products/page |
+| **LLM Costs** | None for discovery | Required for extraction |
+| **Reliability** | High (structured data) | Variable (site-dependent) |
+| **Setup Complexity** | Minimal (domain + selectors) | High (selectors + pagination) |
+| **Server Load** | Low | Medium-High |
+| **Maintenance** | Low | High (site changes) |
+
+**Recommendation**: Use API mode for all domains available in the API database. Reserve HTML mode for specialized or newly added sites.
 
 ### **Scaling Considerations**
 

@@ -39,7 +39,12 @@ DEFAULT_CONFIG = {
         "page_timeout": 30000,
         "max_pages": 10,
         "delay_min": 3,
-        "delay_max": 15
+        "delay_max": 15,
+        # Safety limits for JS-based pagination / load-more behavior
+        # These can be overridden via environment variables:
+        #   MAX_JS_PAGINATION_PAGES, MAX_JS_PAGINATION_CLICKS
+        "max_js_pagination_pages": 500,
+        "max_js_pagination_clicks": 100,
     },
     "pdf_settings": {
         "max_file_size_mb": 60,  # Maximum PDF file size to download
@@ -67,7 +72,7 @@ DEFAULT_CONFIG = {
             "Application guide": 2,
             "Design guide": 2,
             "Generic": 1,
-            "CAD": 1,
+            "CAD": 2,
             "ZIP": 1,
             "Catalog": 2,
             "EDZ": 1

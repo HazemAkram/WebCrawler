@@ -54,6 +54,103 @@ load_dotenv()
 
 log_callback = None
 
+# API endpoint configuration
+API_BASE_URL = "https://factory-help.online/prods/json"
+
+async def fetch_products_from_api(domain_name: str, session: aiohttp.ClientSession = None) -> List[dict]:
+    """
+    Fetch all products for a given domain from the API using pagination.
+    
+    Args:
+        domain_name: The domain name to fetch products for
+        session: Optional aiohttp session (will create one if not provided)
+        
+    Returns:
+        List of product dicts with 'productName' and 'productLink' keys
+    """
+    def _log(message, level="INFO"):
+        if log_callback:
+            log_callback(message, level)
+        else:
+            print(f"[{level}] {message}")
+    
+    products = []
+    page = 1
+    close_session = False
+    
+    if session is None:
+        session = aiohttp.ClientSession()
+        close_session = True
+    
+    try:
+        while True:
+            url = f"{API_BASE_URL}?domain={domain_name}&page={page}"
+            _log(f"📡 Fetching products from API: {url}", "INFO")
+            
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status != 200:
+                        _log(f"⚠️ API returned status {response.status} for {domain_name} page {page}", "WARNING")
+                        break
+                    
+                    data = await response.json()
+                    
+                    # Check if response is empty or not a list
+                    if not data or not isinstance(data, list):
+                        _log(f"✅ API pagination complete for {domain_name} at page {page} (empty response)", "INFO")
+                        break
+                    
+                    # Extract products from response
+                    page_products = []
+                    for item in data:
+                        name = item.get("name", "").strip()
+                        source_url = item.get("source_url", "").strip()
+                        
+                        if name and source_url:
+                            page_products.append({
+                                "productName": name,
+                                "productLink": source_url,
+                            })
+                        else:
+                            _log(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")
+                    
+                    if not page_products:
+                        _log(f"✅ API pagination complete for {domain_name} at page {page} (no valid products)", "INFO")
+                        break
+                    
+                    products.extend(page_products)
+                    _log(f"📦 Fetched {len(page_products)} products from page {page} (total: {len(products)})", "INFO")
+                    
+                    # If we got fewer than 500 products, we've likely reached the end
+                    if len(page_products) < 500:
+                        _log(f"✅ API pagination complete for {domain_name} (received {len(page_products)} < 500 products)", "INFO")
+                        break
+                    
+                    page += 1
+                    
+                    # Add a small delay to be respectful to the API
+                    await asyncio.sleep(0.5)
+                    
+            except asyncio.TimeoutError:
+                _log(f"⏱️ Timeout fetching page {page} for {domain_name}", "ERROR")
+                break
+            except aiohttp.ClientError as e:
+                _log(f"❌ Network error fetching page {page} for {domain_name}: {str(e)}", "ERROR")
+                break
+            except json.JSONDecodeError as e:
+                _log(f"❌ Invalid JSON response for page {page} of {domain_name}: {str(e)}", "ERROR")
+                break
+            except Exception as e:
+                _log(f"❌ Unexpected error fetching page {page} for {domain_name}: {str(e)}", "ERROR")
+                break
+    
+    finally:
+        if close_session:
+            await session.close()
+    
+    _log(f"🎯 Total products fetched for {domain_name}: {len(products)}", "INFO")
+    return products
+
 # Global PDF tracker with asyncio-safe state management
 class PDFStatusTracker:
     """
@@ -2130,8 +2227,8 @@ def get_browser_config() -> BrowserConfig:
     return BrowserConfig(
         browser_type=browser_type,  # Type of browser to simulate
         headless=True,  # Whether to run in headless mode (no GUI)
-        viewport_height=720,
-        viewport_width=1080,
+        viewport_height=1080,
+        viewport_width=1920,
         verbose=True,  # Enable verbose logging
         user_agent = user_agent,  # Custom headers to include
         extra_args=[

@@ -332,7 +332,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                     total_api_products += len(page_venues)
                                     log_message(f"✅ Fetched {len(page_venues)} products from API page {cur_page} for '{domain_name}'", "SUCCESS")
                                     # Process batch as before
-                                    BATCH_SIZE = 1
+                                    BATCH_SIZE = 10
                                     total_products = len(page_venues)
                                     product_idx = 0
                                     batch_num = 1

@@ -155,11 +155,13 @@ async def process_single_product(
     session_id: str,
     domain_name: str,
     semaphore: asyncio.Semaphore,
-    stop_requested_callback=None
+    stop_requested_callback=None,
+    page_number: int = None
 ):
     """
     Process a single product: download and clean PDFs.
     Uses a semaphore to limit concurrency and avoid overwhelming servers.
+    Now returns detailed error information for reporting.
     
     Args:
         venue: Product information dict
@@ -172,51 +174,130 @@ async def process_single_product(
         domain_name: Domain name
         semaphore: Asyncio semaphore for rate limiting
         stop_requested_callback: Callback to check if stop is requested
+        page_number: API page number (for error reporting)
         
     Returns:
-        Summary dict or None if failed/stopped
+        Tuple of (summary_dict or None, error_dict or None)
     """
     async with semaphore:  # Control concurrency
         if stop_requested_callback and stop_requested_callback():
             log_message("Stop requested by user.", "WARNING")
-            return None
+            return None, None
+        
+        product_url = venue.get('productLink', '')
+        product_name = venue.get('productName', 'Unknown')
+        
+        # First, check if product page is accessible
+        try:
+            async with aiohttp.ClientSession() as check_session:
+                async with check_session.head(product_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as response:
+                    if response.status >= 400:
+                        error_info = {
+                            "page_number": page_number,
+                            "cat_name": site.get("cat_name", "Unknown"),
+                            "productName": product_name,
+                            "productLink": product_url,
+                            "error_type": "product_page_access",
+                            "http_status": response.status,
+                            "error_message": f"HTTP {response.status}: {response.reason}"
+                        }
+                        log_message(f"❌ Product page inaccessible: {product_url} (HTTP {response.status})", "ERROR")
+                        return None, error_info
+        except asyncio.TimeoutError:
+            error_info = {
+                "page_number": page_number,
+                "cat_name": site.get("cat_name", "Unknown"),
+                "productName": product_name,
+                "productLink": product_url,
+                "error_type": "product_page_timeout",
+                "http_status": "N/A",
+                "error_message": "Timeout checking product page accessibility"
+            }
+            log_message(f"⏱️ Timeout checking product page: {product_url}", "ERROR")
+            return None, error_info
+        except Exception as e:
+            error_info = {
+                "page_number": page_number,
+                "cat_name": site.get("cat_name", "Unknown"),
+                "productName": product_name,
+                "productLink": product_url,
+                "error_type": "product_page_error",
+                "http_status": "N/A",
+                "error_message": f"Error checking page: {str(e)}"
+            }
+            log_message(f"❌ Error checking product page {product_url}: {str(e)}", "ERROR")
+            return None, error_info
         
         # Create dedicated crawler for this product
-        async with AsyncWebCrawler(config=browser_config) as product_crawler:
-            venue_session_id = f"{session_id}_{hash(venue['productLink'])}"
-            log_message(f"📥 Processing product page for PDFs: {venue['productLink']}", "INFO")
-            
-            try:
-                # Add random delay to be polite to servers
-                await asyncio.sleep(random.uniform(5, 15))
+        try:
+            async with AsyncWebCrawler(config=browser_config) as product_crawler:
+                venue_session_id = f"{session_id}_{hash(product_url)}"
+                log_message(f"📥 Processing product page for PDFs: {product_url}", "INFO")
                 
-                summary = await download_pdf_links(
-                    product_crawler,
-                    product_url=venue["productLink"],
-                    output_folder="output",
-                    pdf_selector=site["pdf_selector"],
-                    session_id=venue_session_id,
-                    regex_strategy=regex_strategy,
-                    domain_name=domain_name,
-                    pdf_llm_strategy=pdf_llm_strategy,
-                    api_key=api_key,
-                    cat_name=site["cat_name"],
-                    pdf_button_selector=site.get("pdf_button_selector", ""),
-                )
-                
-                if summary:
-                    return {
-                        "productLink": summary.get("productLink"),
-                        "productName": summary.get("productName"),
-                        "category": summary.get("category"),
-                        "saved_count": summary.get("saved_count", 0),
-                        "has_datasheet": summary.get("has_datasheet", False),
+                try:
+                    # Add random delay to be polite to servers
+                    await asyncio.sleep(random.uniform(5, 15))
+                    
+                    summary = await download_pdf_links(
+                        product_crawler,
+                        product_url=product_url,
+                        output_folder="output",
+                        pdf_selector=site["pdf_selector"],
+                        session_id=venue_session_id,
+                        regex_strategy=regex_strategy,
+                        domain_name=domain_name,
+                        pdf_llm_strategy=pdf_llm_strategy,
+                        api_key=api_key,
+                        cat_name=site["cat_name"],
+                        pdf_button_selector=site.get("pdf_button_selector", ""),
+                    )
+                    
+                    if summary:
+                        return {
+                            "productLink": summary.get("productLink"),
+                            "productName": summary.get("productName"),
+                            "category": summary.get("category"),
+                            "saved_count": summary.get("saved_count", 0),
+                            "has_datasheet": summary.get("has_datasheet", False),
+                        }, None
+                    else:
+                        # No PDFs found or processing failed
+                        error_info = {
+                            "page_number": page_number,
+                            "cat_name": site.get("cat_name", "Unknown"),
+                            "productName": product_name,
+                            "productLink": product_url,
+                            "error_type": "pdf_processing_failed",
+                            "http_status": "N/A",
+                            "error_message": "No PDFs found or processing returned no summary"
+                        }
+                        return None, error_info
+                    
+                except Exception as pdf_error:
+                    error_info = {
+                        "page_number": page_number,
+                        "cat_name": site.get("cat_name", "Unknown"),
+                        "productName": product_name,
+                        "productLink": product_url,
+                        "error_type": "pdf_download_error",
+                        "http_status": "N/A",
+                        "error_message": f"PDF processing exception: {str(pdf_error)}"
                     }
-                return None
-                
-            except Exception as pdf_error:
-                log_message(f"❌ PDF processing failed for {venue.get('productName', 'Unknown')}: {str(pdf_error)}", "ERROR")
-                return None
+                    log_message(f"❌ PDF processing failed for {product_name}: {str(pdf_error)}", "ERROR")
+                    return None, error_info
+                    
+        except Exception as crawler_error:
+            error_info = {
+                "page_number": page_number,
+                "cat_name": site.get("cat_name", "Unknown"),
+                "productName": product_name,
+                "productLink": product_url,
+                "error_type": "crawler_initialization_error",
+                "http_status": "N/A",
+                "error_message": f"Crawler error: {str(crawler_error)}"
+            }
+            log_message(f"❌ Crawler error for {product_name}: {str(crawler_error)}", "ERROR")
+            return None, error_info
 
 async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str = "groq/llama-3.1-8b-instant", 
                               status_callback=None, stop_requested_callback=None):
@@ -331,8 +412,12 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                     stats["api_products"] += len(page_venues)
                                     total_api_products += len(page_venues)
                                     log_message(f"✅ Fetched {len(page_venues)} products from API page {cur_page} for '{domain_name}'", "SUCCESS")
+                                    
+                                    # Error tracking for this page
+                                    page_errors = []
+                                    
                                     # Process batch as before
-                                    BATCH_SIZE = 10
+                                    BATCH_SIZE = 1
                                     total_products = len(page_venues)
                                     product_idx = 0
                                     batch_num = 1
@@ -350,22 +435,61 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                                 session_id=session_id,
                                                 domain_name=domain_name,
                                                 semaphore=product_semaphore,
-                                                stop_requested_callback=stop_requested_callback
+                                                stop_requested_callback=stop_requested_callback,
+                                                page_number=cur_page
                                             )
                                             for venue in batch_venues
                                         ]
-                                        summaries = await asyncio.gather(*product_tasks, return_exceptions=True)
-                                        for summary in summaries:
-                                            if isinstance(summary, Exception):
-                                                log_message(f"❌ Product processing raised exception: {str(summary)}", "ERROR")
-                                            elif summary:
-                                                cat_summaries.append(summary)
+                                        results = await asyncio.gather(*product_tasks, return_exceptions=True)
+                                        for result in results:
+                                            if isinstance(result, Exception):
+                                                log_message(f"❌ Product processing raised exception: {str(result)}", "ERROR")
+                                                # Create error entry for exception
+                                                page_errors.append({
+                                                    "page_number": cur_page,
+                                                    "cat_name": site.get("cat_name", "Unknown"),
+                                                    "productName": "Unknown",
+                                                    "productLink": "Unknown",
+                                                    "error_type": "processing_exception",
+                                                    "http_status": "N/A",
+                                                    "error_message": f"Exception: {str(result)}"
+                                                })
+                                            elif result:
+                                                # Result is tuple: (summary, error)
+                                                summary, error = result
+                                                if summary:
+                                                    cat_summaries.append(summary)
+                                                if error:
+                                                    page_errors.append(error)
                                         log_message(f"✅ [API] Completed batch {batch_num} ({min(product_idx+BATCH_SIZE, total_products)}/{total_products} products) on page {cur_page}", "INFO")
                                         product_idx += BATCH_SIZE
                                         batch_num += 1
                                         if product_idx < total_products:
                                             await asyncio.sleep(5)
                                     log_message(f"✅ [API] Completed all batches for {len(page_venues)} products on page {cur_page}", "INFO")
+                                    
+                                    # Write per-page error report if there are errors
+                                    if page_errors:
+                                        try:
+                                            os.makedirs("ERROR_REPORTS", exist_ok=True)
+                                            from datetime import datetime
+                                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                            domain_sanitized = sanitize_folder_name(domain_name)
+                                            error_csv = os.path.join("ERROR_REPORTS", f"errors_{domain_sanitized}_page_{cur_page}_{ts}.csv")
+                                            
+                                            with open(error_csv, "w", newline="", encoding="utf-8") as f:
+                                                fieldnames = ["page_number", "cat_name", "productName", "productLink", "error_type", "http_status", "error_message"]
+                                                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                                                writer.writeheader()
+                                                for error in page_errors:
+                                                    writer.writerow(error)
+                                            
+                                            log_message(f"📋 [API] Wrote error report: {error_csv} ({len(page_errors)} errors)", "WARNING")
+                                        except Exception as e:
+                                            log_message(f"⚠️ Failed to write error report for page {cur_page}: {e}", "ERROR")
+                                    else:
+                                        log_message(f"✅ [API] No errors on page {cur_page}", "INFO")
+                                    
                                     for v in page_venues:
                                         v["category"] = site["cat_name"]
                                         category_to_products.setdefault(site["cat_name"], []).append(v)
@@ -474,6 +598,9 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                             
                             log_message(f"🚀 Starting parallel processing of {len(venues)} products", "INFO")
                             
+                            # Error tracking for HTML mode page
+                            page_errors = []
+                            
                             BATCH_SIZE = 1  # Configurable: how many products to launch per batch
                             total_products = len(venues)
                             product_idx = 0
@@ -493,17 +620,31 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                         session_id=session_id,
                                         domain_name=domain_name,
                                         semaphore=product_semaphore,
-                                        stop_requested_callback=stop_requested_callback
+                                        stop_requested_callback=stop_requested_callback,
+                                        page_number=page_number
                                     )
                                     for venue in batch_venues
                                 ]
 
-                                summaries = await asyncio.gather(*product_tasks, return_exceptions=True)
-                                for summary in summaries:
-                                    if isinstance(summary, Exception):
-                                        log_message(f"❌ Product processing raised exception: {str(summary)}", "ERROR")
-                                    elif summary:
-                                        cat_summaries.append(summary)
+                                results = await asyncio.gather(*product_tasks, return_exceptions=True)
+                                for result in results:
+                                    if isinstance(result, Exception):
+                                        log_message(f"❌ Product processing raised exception: {str(result)}", "ERROR")
+                                        page_errors.append({
+                                            "page_number": page_number,
+                                            "cat_name": site.get("cat_name", "Unknown"),
+                                            "productName": "Unknown",
+                                            "productLink": "Unknown",
+                                            "error_type": "processing_exception",
+                                            "http_status": "N/A",
+                                            "error_message": f"Exception: {str(result)}"
+                                        })
+                                    elif result:
+                                        summary, error = result
+                                        if summary:
+                                            cat_summaries.append(summary)
+                                        if error:
+                                            page_errors.append(error)
 
                                 log_message(f"✅ Completed batch {batch_num} ({product_idx+BATCH_SIZE if product_idx+BATCH_SIZE < total_products else total_products}/{total_products} products)", "INFO")
                                 product_idx += BATCH_SIZE
@@ -512,6 +653,28 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                     await asyncio.sleep(5)  # Brief pause between batches
                             
                             log_message(f"✅ Completed all batches for {len(venues)} products", "INFO")
+
+                            # Write per-page error report for HTML mode if there are errors
+                            if page_errors:
+                                try:
+                                    os.makedirs("ERROR_REPORTS", exist_ok=True)
+                                    from datetime import datetime
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    domain_sanitized = sanitize_folder_name(domain_name)
+                                    error_csv = os.path.join("ERROR_REPORTS", f"errors_{domain_sanitized}_page_{page_number}_{ts}.csv")
+                                    
+                                    with open(error_csv, "w", newline="", encoding="utf-8") as f:
+                                        fieldnames = ["page_number", "cat_name", "productName", "productLink", "error_type", "http_status", "error_message"]
+                                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                                        writer.writeheader()
+                                        for error in page_errors:
+                                            writer.writerow(error)
+                                    
+                                    log_message(f"📋 [HTML] Wrote error report: {error_csv} ({len(page_errors)} errors)", "WARNING")
+                                except Exception as e:
+                                    log_message(f"⚠️ Failed to write error report for page {page_number}: {e}", "ERROR")
+                            else:
+                                log_message(f"✅ [HTML] No errors on page {page_number}", "INFO")
 
                             # Track HTML products count
                             stats["html_products"] += len(venues)

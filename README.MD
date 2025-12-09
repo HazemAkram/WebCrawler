@@ -336,7 +336,23 @@ CSVS/
 ├── downloaded_Category_A_20250101_120000.csv
 ├── downloaded_Category_B_20250101_120500.csv
 └── ...
+ERROR_REPORTS/
+├── errors_festo_com_page_2_20250108_143022.csv
+├── errors_siemens_com_page_5_20250108_150315.csv
+└── ...
 ```
+
+### **Error Reporting**
+
+The crawler automatically generates per-page error reports for any product processing failures:
+
+- **Location**: `ERROR_REPORTS/` folder
+- **Format**: CSV with detailed error information
+- **Captures**: HTTP errors (1xx-5xx), timeouts, exceptions, PDF failures
+- **Per-page**: Separate report for each page with errors
+- **Details**: Product name, URL, error type, HTTP status, error message
+
+See [ERROR_REPORTING_GUIDE.md](ERROR_REPORTING_GUIDE.md) for complete documentation.
 
 ---
 

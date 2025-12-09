@@ -417,7 +417,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                     page_errors = []
                                     
                                     # Process batch as before
-                                    BATCH_SIZE = 1
+                                    BATCH_SIZE = 10
                                     total_products = len(page_venues)
                                     product_idx = 0
                                     batch_num = 1

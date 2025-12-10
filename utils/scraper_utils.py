@@ -1233,7 +1233,7 @@ async def download_pdf_links(
 
     # Early return: If pdf_button_selector provided, use Playwright directly (skip LLM extraction)
     if pdf_button_selector and pdf_button_selector.strip():
-        log_message(f"🎭 Detected pdf_button_selector, using Playwright for button-triggered downloads", "INFO")
+        log_message(f"🎭 Detected pdf_button_selector {{{pdf_button_selector}}}, using Playwright for button-triggered downloads", "INFO")
         try:
             # Check if Playwright is available
             try:

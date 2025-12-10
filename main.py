@@ -189,7 +189,7 @@ async def process_single_product(
         
         # First, check if product page is accessible
         try:
-            async with aiohttp.ClientSession() as check_session:
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True)) as check_session:
                 async with check_session.head(product_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as response:
                     if response.status >= 400:
                         error_info = {
@@ -417,7 +417,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                     page_errors = []
                                     
                                     # Process batch as before
-                                    BATCH_SIZE = 10
+                                    BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '1'))
                                     total_products = len(page_venues)
                                     product_idx = 0
                                     batch_num = 1

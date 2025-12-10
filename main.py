@@ -36,7 +36,8 @@ from utils.scraper_utils import (
     get_page_number,
     detect_pagination_type,
     sanitize_folder_name,
-    fetch_products_from_api
+    fetch_products_from_api,
+    get_browser_cookies_for_domain
 )
 
 load_dotenv()
@@ -104,6 +105,10 @@ def read_sites_from_csv(input_file):
                 end_page = None
             # Build site config based on mode
             if mode == "api":
+                # Check if browser cookie extraction should be used (default: True)
+                use_browser_cookies = row.get("use_browser_cookies", "true").strip().lower()
+                use_browser_cookies = use_browser_cookies in ["true", "1", "yes", "y", ""]
+                
                 sites.append({
                     "mode": "api",
                     "domain_name": domain_name,
@@ -112,6 +117,7 @@ def read_sites_from_csv(input_file):
                     "pdf_button_selector": pdf_button_selector,
                     "start_page": start_page,
                     "end_page": end_page,
+                    "use_browser_cookies": use_browser_cookies,
                 })
             else:  # html mode
                 css_list = [s.strip() for s in row.get('css_selector', '').split('|') if s.strip()]
@@ -376,11 +382,35 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                     stats["api_mode_count"] += 1
                     stats["api_domains"].append(domain_name)
 
+                    # Check if browser cookie extraction is enabled for this domain
+                    use_browser_cookies = site.get("use_browser_cookies", True)
+                    cookies = {}
+                    headers = {}
+                    
+                    if use_browser_cookies:
+                        # Extract cookies and headers using Playwright to bypass bot detection
+                        # Construct the domain URL from the domain name
+                        domain_url = f"https://{domain_name}" if not domain_name.startswith('http') else domain_name
+                        log_message(f"🍪 Extracting browser cookies for domain: {domain_url}", "INFO")
+                        
+                        browser_auth = await get_browser_cookies_for_domain(domain_url)
+                        cookies = browser_auth.get('cookies', {})
+                        headers = browser_auth.get('headers', {})
+                        
+                        log_message(f"✅ Extracted {len(cookies)} cookies and prepared headers for API requests", "INFO")
+                    else:
+                        log_message(f"⚠️ Browser cookie extraction disabled for domain '{domain_name}'", "INFO")
+                        # Use basic headers without cookies
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+                            'Accept': 'application/json, text/javascript, */*; q=0.01',
+                        }
+
                     start_page = site.get("start_page", 1)
                     end_page = site.get("end_page")
                     cur_page = start_page
                     total_api_products = 0
-                    async with aiohttp.ClientSession() as api_session:
+                    async with aiohttp.ClientSession(headers=headers, cookies=cookies) as api_session:
                         while True:
                             if end_page and cur_page > end_page:
                                 break

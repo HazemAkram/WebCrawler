@@ -15,6 +15,7 @@ import traceback
 import asyncio
 import gc 
 import shutil  # Add import for file copying operations
+import random  # For random delays in cookie extraction
 from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeoutError
 from functools import partial
 import multiprocessing
@@ -56,6 +57,128 @@ log_callback = None
 
 # API endpoint configuration
 API_BASE_URL = "https://factory-help.online/prods/json"
+
+async def get_browser_cookies_for_domain(domain_url: str) -> dict:
+    """
+    Use Playwright to visit a domain and extract cookies to bypass bot detection.
+    
+    Args:
+        domain_url: The full URL of the domain to visit (e.g., 'https://example.com')
+        
+    Returns:
+        Dictionary with 'cookies' (dict) and 'headers' (dict) for use in requests
+    """
+    def _log(message, level="INFO"):
+        if log_callback:
+            log_callback(message, level)
+        else:
+            try:
+                print(f"[{level}] {message}")
+            except UnicodeEncodeError:
+                # Fallback for Windows console encoding issues
+                print(f"[{level}] {message.encode('ascii', 'replace').decode('ascii')}")
+    
+    try:
+        from playwright.async_api import async_playwright
+        
+        _log(f"🌐 Opening browser to extract cookies from: {domain_url}", "INFO")
+        
+        async with async_playwright() as p:
+            # Launch browser with similar config to get_browser_config
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev_shm-usage",
+                    "--disable-gpu",
+                    "--disable-features=VizDisplayCompositor",
+                    "--max_old_space_size=4096",
+                ]
+            )
+            
+            # Create context with realistic browser settings
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+                viewport={'width': 1080, 'height': 720},
+                locale='en-US',
+                timezone_id='America/New_York',
+            )
+            
+            page = await context.new_page()
+            
+            try:
+                # Visit the domain and wait for it to fully load
+                await page.goto(domain_url, wait_until='networkidle', timeout=30000)
+                _log(f"✅ Successfully loaded page: {domain_url}", "INFO")
+                
+                # Additional delay to ensure all cookies are set (especially dynamic ones)
+                # Some sites set cookies via JavaScript after page load
+                delay = random.uniform(10, 15)  # Random delay between 3-5 seconds
+                _log(f"⏳ Waiting {delay:.1f} seconds for cookies to be set...", "INFO")
+                await asyncio.sleep(delay)
+                
+                # Extract cookies from the browser context
+                cookies = await context.cookies()
+                
+                # Format cookies for aiohttp (dict format)
+                cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
+                
+                # Get the user agent from the page
+                user_agent = await page.evaluate("navigator.userAgent")
+                
+                # Prepare headers that mimic a real browser
+                headers = {
+                    'User-Agent': user_agent,
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': domain_url,
+                    'Origin': domain_url,
+                    'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin',
+                }
+                
+                _log(f"🍪 Extracted {len(cookies_dict)} cookies from browser session", "INFO")
+                
+                await browser.close()
+                
+                return {
+                    'cookies': cookies_dict,
+                    'headers': headers
+                }
+                
+            except Exception as page_error:
+                _log(f"⚠️ Error loading page {domain_url}: {str(page_error)}", "WARNING")
+                await browser.close()
+                # Return empty cookies/headers on error
+                return {
+                    'cookies': {},
+                    'headers': {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+                        'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    }
+                }
+                
+    except ImportError:
+        _log("⚠️ Playwright not available, proceeding without cookie extraction", "WARNING")
+        return {
+            'cookies': {},
+            'headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+            }
+        }
+    except Exception as e:
+        _log(f"❌ Unexpected error in cookie extraction: {str(e)}", "ERROR")
+        return {
+            'cookies': {},
+            'headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+            }
+        }
 
 async def fetch_products_from_api(domain_name: str, session: aiohttp.ClientSession = None) -> List[dict]:
     """

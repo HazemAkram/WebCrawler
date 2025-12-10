@@ -162,7 +162,9 @@ async def process_single_product(
     domain_name: str,
     semaphore: asyncio.Semaphore,
     stop_requested_callback=None,
-    page_number: int = None
+    page_number: int = None,
+    cookies: dict = None,
+    headers: dict = None,
 ):
     """
     Process a single product: download and clean PDFs.
@@ -195,7 +197,7 @@ async def process_single_product(
         
         # First, check if product page is accessible
         try:
-            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True)) as check_session:
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True), cookies=cookies, headers=headers) as check_session:
                 async with check_session.head(product_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as response:
                     if response.status >= 400:
                         error_info = {
@@ -466,7 +468,9 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                                 domain_name=domain_name,
                                                 semaphore=product_semaphore,
                                                 stop_requested_callback=stop_requested_callback,
-                                                page_number=cur_page
+                                                page_number=cur_page,
+                                                cookies=cookies,
+                                                headers=headers,
                                             )
                                             for venue in batch_venues
                                         ]

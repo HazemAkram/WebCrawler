@@ -482,7 +482,7 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
         }}
         console.log('[JS] Starting enhanced product name extraction...');
         await new Promise(r => setTimeout(r, 3000));
-
+        
         // Special case: Try extracting from h1.childNodes[2] first (for specific site structure)
         var productName = "";
         var usedSelector = "";

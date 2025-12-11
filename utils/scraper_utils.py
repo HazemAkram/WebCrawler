@@ -58,6 +58,138 @@ log_callback = None
 # API endpoint configuration
 API_BASE_URL = "https://factory-help.online/prods/json"
 
+async def create_unified_browser_context(domain_url: str):
+    """
+    Create a unified Playwright browser context for both API and HTML crawling.
+    This ensures all requests (API calls, HTML navigation, PDF downloads) use
+    the same browser fingerprint, cookies, and headers for maximum anti-bot stealth.
+    
+    Args:
+        domain_url: The full URL of the domain to visit (e.g., 'https://example.com')
+        
+    Returns:
+        Dictionary with:
+        - 'browser': Playwright browser instance
+        - 'context': Browser context with cookies/session
+        - 'page': Initial page (already visited domain)
+        - 'headers': Extracted browser headers
+        - 'user_agent': Real browser user agent
+    """
+    def _log(message, level="INFO"):
+        if log_callback:
+            log_callback(message, level)
+        else:
+            try:
+                print(f"[{level}] {message}")
+            except UnicodeEncodeError:
+                print(f"[{level}] {message.encode('ascii', 'replace').decode('ascii')}")
+    
+    try:
+        from playwright.async_api import async_playwright
+        
+        _log(f"🌐 Creating unified browser context for: {domain_url}", "INFO")
+        
+        playwright = await async_playwright().start()
+        
+        # Launch browser with anti-detection config
+        browser = await playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-features=VizDisplayCompositor",
+                "--max_old_space_size=4096",
+            ]
+        )
+        
+        # Create context with realistic browser settings
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080},
+            locale='en-US',
+            timezone_id='America/New_York',
+        )
+        
+        page = await context.new_page()
+        
+        try:
+            # Visit the domain and wait for it to fully load
+            await page.goto(domain_url, wait_until='networkidle', timeout=30000)
+            _log(f"✅ Successfully loaded page: {domain_url}", "INFO")
+            
+            # Additional delay to ensure all cookies are set
+            delay = random.uniform(10, 15)
+            _log(f"⏳ Waiting {delay:.1f} seconds for cookies to be set...", "INFO")
+            await asyncio.sleep(delay)
+            
+            # Extract cookies from the browser context
+            cookies = await context.cookies()
+            cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
+            
+            # Get the user agent from the page
+            user_agent = await page.evaluate("navigator.userAgent")
+            
+            # Prepare canonical headers that mimic a real browser
+            # These will be used for ALL requests (API, HTML, PDF downloads)
+            headers = {
+                'User-Agent': user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': domain_url,
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-User': '?1',
+                'Pragma': 'no-cache',
+                'Cache-Control': 'no-cache',
+            }
+            
+            _log(f"🍪 Extracted {len(cookies_dict)} cookies from unified browser session", "INFO")
+            _log(f"🔧 Prepared canonical headers for all requests", "INFO")
+            
+            return {
+                'playwright': playwright,
+                'browser': browser,
+                'context': context,
+                'page': page,
+                'headers': headers,
+                'user_agent': user_agent,
+                'cookies': cookies_dict,
+            }
+            
+        except Exception as page_error:
+            _log(f"⚠️ Error loading page {domain_url}: {str(page_error)}", "WARNING")
+            await browser.close()
+            await playwright.stop()
+            return None
+            
+    except ImportError:
+        _log("⚠️ Playwright not available", "WARNING")
+        return None
+    except Exception as e:
+        _log(f"❌ Unexpected error creating browser context: {str(e)}", "ERROR")
+        return None
+
+async def close_unified_browser_context(browser_ctx: dict):
+    """Close the unified browser context and cleanup resources."""
+    if browser_ctx:
+        try:
+            if 'page' in browser_ctx and browser_ctx['page']:
+                await browser_ctx['page'].close()
+            if 'context' in browser_ctx and browser_ctx['context']:
+                await browser_ctx['context'].close()
+            if 'browser' in browser_ctx and browser_ctx['browser']:
+                await browser_ctx['browser'].close()
+            if 'playwright' in browser_ctx and browser_ctx['playwright']:
+                await browser_ctx['playwright'].stop()
+        except Exception as e:
+            if log_callback:
+                log_callback(f"⚠️ Error closing browser context: {str(e)}", "WARNING")
+
 async def get_browser_cookies_for_domain(domain_url: str) -> dict:
     """
     Use Playwright to visit a domain and extract cookies to bypass bot detection.
@@ -179,6 +311,89 @@ async def get_browser_cookies_for_domain(domain_url: str) -> dict:
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
             }
         }
+
+async def fetch_products_from_api_via_browser(
+    domain_name: str, 
+    page_number: int,
+    browser_context: dict
+) -> List[dict]:
+    """
+    Fetch products for a given domain and page from the API using Playwright browser context.
+    This ensures the API request uses the same browser fingerprint as HTML crawling.
+    
+    Args:
+        domain_name: The domain name to fetch products for
+        page_number: The page number to fetch
+        browser_context: Unified browser context from create_unified_browser_context()
+        
+    Returns:
+        List of product dicts with 'productName' and 'productLink' keys
+    """
+    def _log(message, level="INFO"):
+        if log_callback:
+            log_callback(message, level)
+        else:
+            print(f"[{level}] {message}")
+    
+    products = []
+    
+    try:
+        context = browser_context['context']
+        headers = browser_context['headers']
+        
+        # Construct API URL
+        url = f"{API_BASE_URL}?domain={domain_name}&page={page_number}"
+        _log(f"📡 Fetching products from API via browser: {url}", "INFO")
+        
+        # Use Playwright's context.request to make the API call
+        # This ensures the request uses the same browser session/cookies/headers
+        api_request = context.request
+        
+        try:
+            response = await api_request.get(
+                url,
+                headers={
+                    **headers,
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                },
+                timeout=30000
+            )
+            
+            if response.status != 200:
+                _log(f"⚠️ API returned status {response.status} for {domain_name} page {page_number}", "WARNING")
+                return []
+            
+            data = await response.json()
+            
+            # Check if response is empty or not a list
+            if not data or not isinstance(data, list):
+                _log(f"✅ API pagination complete for {domain_name} at page {page_number} (empty response)", "INFO")
+                return []
+            
+            # Extract products from response
+            for item in data:
+                name = item.get("name", "").strip()
+                source_url = item.get("source_url", "").strip()
+                
+                if name and source_url:
+                    products.append({
+                        "productName": name,
+                        "productLink": source_url,
+                    })
+                else:
+                    _log(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")
+            
+            _log(f"📦 Fetched {len(products)} products from page {page_number}", "INFO")
+            
+        except Exception as e:
+            _log(f"❌ Error fetching page {page_number} for {domain_name}: {str(e)}", "ERROR")
+            return []
+    
+    except Exception as e:
+        _log(f"❌ Unexpected error in API fetch: {str(e)}", "ERROR")
+        return []
+    
+    return products
 
 async def fetch_products_from_api(domain_name: str, session: aiohttp.ClientSession = None) -> List[dict]:
     """
@@ -582,7 +797,7 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
         
         return productName;
         """
-
+ 
 def log_message(message, level="INFO"):
     """Log a message, either to console or web interface"""
     global log_callback
@@ -1109,6 +1324,7 @@ async def download_pdfs_via_playwright(
     output_folder: str,
     api_key: str,
     cat_name: str = "Uncategorized",
+    preserve_product_name: str = None,
 ) -> tuple:
     """
     Handle browser-triggered downloads using Playwright download events.
@@ -1121,6 +1337,7 @@ async def download_pdfs_via_playwright(
         output_folder: Base output directory for downloads
         api_key: API key for potential future use
         cat_name: Category name for folder organization
+        preserve_product_name: If provided, use this name instead of extracting from HTML (for API mode)
         
     Returns:
         Tuple of (list of file paths, product name, category path, product path)
@@ -1209,28 +1426,32 @@ async def download_pdfs_via_playwright(
             # Wait for page to settle
             await page.wait_for_timeout(2000)
             
-            # Extract product name using JavaScript
-            try:
-                # Reuse the product name extraction logic - wrap in arrow function for Playwright
-                derived_product_name = await page.evaluate("""
-                    () => {
-                        let productName = "";
-                        const selectors = ['h1', '.product-title', '.product-name', 'h1.title', 'h2'];
-                        for (let sel of selectors) {
-                            const el = document.querySelector(sel);
-                            if (el && el.innerText && el.innerText.trim().length > 2) {
-                                productName = el.innerText.trim();
-                                break;
+            # Extract product name using JavaScript (or use preserved name from API)
+            if preserve_product_name:
+                derived_product_name = preserve_product_name.strip()
+                log_message(f"📝 Using preserved product name from API: {derived_product_name}", "INFO")
+            else:
+                try:
+                    # Reuse the product name extraction logic - wrap in arrow function for Playwright
+                    derived_product_name = await page.evaluate("""
+                        () => {
+                            let productName = "";
+                            const selectors = ['h1', '.product-title', '.product-name', 'h1.title', 'h2'];
+                            for (let sel of selectors) {
+                                const el = document.querySelector(sel);
+                                if (el && el.innerText && el.innerText.trim().length > 2) {
+                                    productName = el.innerText.trim();
+                                    break;
+                                }
                             }
+                            return productName || "Unknown Product";
                         }
-                        return productName || "Unknown Product";
-                    }
-                """)
-                if derived_product_name and derived_product_name != "Unknown Product":
-                    log_message(f"📝 Product name extracted: {derived_product_name}", "INFO")
-            except Exception as e:
-                log_message(f"⚠️ Could not extract product name: {str(e)}", "WARNING")
-                derived_product_name = "Unknown Product"
+                    """)
+                    if derived_product_name and derived_product_name != "Unknown Product":
+                        log_message(f"📝 Product name extracted: {derived_product_name}", "INFO")
+                except Exception as e:
+                    log_message(f"⚠️ Could not extract product name: {str(e)}", "WARNING")
+                    derived_product_name = "Unknown Product"
             
             # Create folder structure
             sanitized_cat_name = sanitize_folder_name(cat_name)
@@ -1325,6 +1546,7 @@ async def download_pdf_links(
         api_key: str = None,
         cat_name: str = "Uncategorized",
         pdf_button_selector: str = "",
+        preserve_product_name: str = None,
         ):
     
     """
@@ -1336,7 +1558,6 @@ async def download_pdf_links(
     Args:
         crawler: The AsyncWebCrawler instance
         product_url: URL of the product page
-        product_name: Name of the product for folder creation
         output_folder: Base output directory for downloads
         pdf_llm_strategy: LLM extraction strategy for PDF processing
         pdf_selector: CSS selector to target PDF link elements
@@ -1345,6 +1566,8 @@ async def download_pdf_links(
         domain_name: Domain name for URL completion
         api_key: API key for LLM provider
         cat_name: Category name from CSV for folder organization (defaults to "Uncategorized")
+        pdf_button_selector: CSS selector for PDF download buttons
+        preserve_product_name: If provided, use this name instead of extracting from HTML (for API mode)
     """
 
 
@@ -1372,6 +1595,7 @@ async def download_pdf_links(
                 output_folder=output_folder,
                 api_key=api_key,
                 cat_name=cat_name,
+                preserve_product_name=preserve_product_name,
             )
             
             if not playwright_files:
@@ -1526,29 +1750,34 @@ async def download_pdf_links(
         log_message(f"🔗 Found {len(extracted_data)} potential file(s) via CSS selector", "INFO")
 
         # Enhanced product name extraction with better error handling
-        try:
-            if (pdf_result.js_execution_result and 
-                'results' in pdf_result.js_execution_result and 
-                len(pdf_result.js_execution_result['results']) > 0):
-                
-                productName = pdf_result.js_execution_result['results'][0]
-                log_message(f"✅ Product Name Extracted: '{productName}'", "INFO")
-                
-                # Validate extracted product name
-                if productName and productName.strip() and productName != "Unnamed Product":
-                    derived_product_name = productName.strip()
-                    log_message(f"📝 Using extracted product name: '{derived_product_name}'", "INFO")
+        # If preserve_product_name is provided (from API mode), use it directly
+        if preserve_product_name:
+            derived_product_name = preserve_product_name.strip()
+            log_message(f"📝 Using preserved product name from API: '{derived_product_name}'", "INFO")
+        else:
+            try:
+                if (pdf_result.js_execution_result and 
+                    'results' in pdf_result.js_execution_result and 
+                    len(pdf_result.js_execution_result['results']) > 0):
+                    
+                    productName = pdf_result.js_execution_result['results'][0]
+                    log_message(f"✅ Product Name Extracted: '{productName}'", "INFO")
+                    
+                    # Validate extracted product name
+                    if productName and productName.strip() and productName != "Unnamed Product":
+                        derived_product_name = productName.strip()
+                        log_message(f"📝 Using extracted product name: '{derived_product_name}'", "INFO")
+                    else:
+                        derived_product_name = "Unnamed Product"
+                        log_message(f"⚠️ Invalid product name extracted, using fallback: '{derived_product_name}'", "WARNING")
                 else:
                     derived_product_name = "Unnamed Product"
-                    log_message(f"⚠️ Invalid product name extracted, using fallback: '{derived_product_name}'", "WARNING")
-            else:
+                    log_message(f"❌ No JavaScript execution result found, using fallback: '{derived_product_name}'", "ERROR")
+                    
+            except (KeyError, IndexError, TypeError) as e:
                 derived_product_name = "Unnamed Product"
-                log_message(f"❌ No JavaScript execution result found, using fallback: '{derived_product_name}'", "ERROR")
-                
-        except (KeyError, IndexError, TypeError) as e:
-            derived_product_name = "Unnamed Product"
-            log_message(f"❌ Error extracting product name from JavaScript result: {str(e)}", "ERROR")
-            log_message(f"📝 Using fallback product name: '{derived_product_name}'", "INFO")
+                log_message(f"❌ Error extracting product name from JavaScript result: {str(e)}", "ERROR")
+                log_message(f"📝 Using fallback product name: '{derived_product_name}'", "INFO")
 
         # Create the download folder structure after product name extraction
         os.makedirs(output_folder, exist_ok=True)

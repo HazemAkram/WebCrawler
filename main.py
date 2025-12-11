@@ -37,7 +37,10 @@ from utils.scraper_utils import (
     detect_pagination_type,
     sanitize_folder_name,
     fetch_products_from_api,
-    get_browser_cookies_for_domain
+    get_browser_cookies_for_domain,
+    create_unified_browser_context,
+    close_unified_browser_context,
+    fetch_products_from_api_via_browser
 )
 
 load_dotenv()
@@ -165,6 +168,7 @@ async def process_single_product(
     page_number: int = None,
     cookies: dict = None,
     headers: dict = None,
+    preserve_product_name: str = None,
 ):
     """
     Process a single product: download and clean PDFs.
@@ -210,7 +214,7 @@ async def process_single_product(
                             "error_message": f"HTTP {response.status}: {response.reason}"
                         }
                         log_message(f"❌ Product page inaccessible: {product_url} (HTTP {response.status})", "ERROR")
-                        return None, error_info
+                        # return None, error_info
         except asyncio.TimeoutError:
             error_info = {
                 "page_number": page_number,
@@ -258,6 +262,7 @@ async def process_single_product(
                         api_key=api_key,
                         cat_name=site["cat_name"],
                         pdf_button_selector=site.get("pdf_button_selector", ""),
+                        preserve_product_name=preserve_product_name,
                     )
                     
                     if summary:
@@ -378,175 +383,154 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
 
                 # Dispatch based on mode
                 if mode == "api":
-                    # API-based product fetching (now page-wise)
+                    # API-based product fetching using unified browser context
                     domain_name = site["domain_name"]
                     log_message(f"📡 API Mode: Fetching products for domain '{domain_name}'", "INFO")
                     stats["api_mode_count"] += 1
                     stats["api_domains"].append(domain_name)
 
-                    # Check if browser cookie extraction is enabled for this domain
-                    use_browser_cookies = site.get("use_browser_cookies", True)
-                    cookies = {}
-                    headers = {}
+                    # Create unified browser context for this domain
+                    # This ensures all requests (API + product pages) use the same browser session
+                    domain_url = f"https://{domain_name}" if not domain_name.startswith('http') else domain_name
+                    log_message(f"🌐 Creating unified browser context for: {domain_url}", "INFO")
                     
-                    if use_browser_cookies:
-                        # Extract cookies and headers using Playwright to bypass bot detection
-                        # Construct the domain URL from the domain name
-                        domain_url = f"https://{domain_name}" if not domain_name.startswith('http') else domain_name
-                        log_message(f"🍪 Extracting browser cookies for domain: {domain_url}", "INFO")
-                        
-                        browser_auth = await get_browser_cookies_for_domain(domain_url)
-                        cookies = browser_auth.get('cookies', {})
-                        headers = browser_auth.get('headers', {})
-                        
-                        log_message(f"✅ Extracted {len(cookies)} cookies and prepared headers for API requests", "INFO")
-                    else:
-                        log_message(f"⚠️ Browser cookie extraction disabled for domain '{domain_name}'", "INFO")
-                        # Use basic headers without cookies
-                        headers = {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-                            'Accept': 'application/json, text/javascript, */*; q=0.01',
-                        }
+                    browser_ctx = await create_unified_browser_context(domain_url)
+                    
+                    if not browser_ctx:
+                        log_message(f"❌ Failed to create browser context for {domain_name}, skipping", "ERROR")
+                        continue
+                    
+                    try:
+                        cookies = browser_ctx.get('cookies', {})
+                        headers = browser_ctx.get('headers', {})
+                        log_message(f"✅ Unified browser context ready with {len(cookies)} cookies", "INFO")
 
-                    start_page = site.get("start_page", 1)
-                    end_page = site.get("end_page")
-                    cur_page = start_page
-                    total_api_products = 0
-                    async with aiohttp.ClientSession(headers=headers, cookies=cookies) as api_session:
+                        start_page = site.get("start_page", 1)
+                        end_page = site.get("end_page")
+                        cur_page = start_page
+                        total_api_products = 0
                         while True:
                             if end_page and cur_page > end_page:
                                 break
-                            url = f"https://factory-help.online/prods/json?domain={domain_name}&page={cur_page}"
+                            
                             log_message(f"🟦 [API] Fetching page {cur_page} for domain '{domain_name}'", "INFO")
+                            
                             try:
-                                async with api_session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                                    if response.status != 200:
-                                        log_message(f"⚠️ API returned status {response.status} for {domain_name} page {cur_page}", "WARNING")
-                                        break
-                                    data = await response.json()
-                                    if not data or not isinstance(data, list) or len(data) == 0:
-                                        log_message(f"✅ No products or end of pagination for domain '{domain_name}' at page {cur_page}", "INFO")
-                                        break
-                                    page_venues = []
-                                    for item in data:
-                                        name = item.get("name", "").strip()
-                                        source_url = item.get("source_url", "").strip()
-                                        if name and source_url:
-                                            page_venues.append({
-                                                "productName": name,
-                                                "productLink": source_url,
+                                # Fetch products using the unified browser context
+                                page_venues = await fetch_products_from_api_via_browser(
+                                    domain_name=domain_name,
+                                    page_number=cur_page,
+                                    browser_context=browser_ctx
+                                )
+                                
+                                if not page_venues:
+                                    log_message(f"✅ No products or end of pagination for domain '{domain_name}' at page {cur_page}", "INFO")
+                                    break
+                                stats["api_products"] += len(page_venues)
+                                total_api_products += len(page_venues)
+                                log_message(f"✅ Fetched {len(page_venues)} products from API page {cur_page} for '{domain_name}'", "SUCCESS")
+                                
+                                # Error tracking for this page
+                                page_errors = []
+                                
+                                # Process batch as before
+                                BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '1'))
+                                total_products = len(page_venues)
+                                product_idx = 0
+                                batch_num = 1
+                                while product_idx < total_products:
+                                    batch_venues = page_venues[product_idx : product_idx + BATCH_SIZE]
+                                    log_message(f"⚡ [API] Processing batch {batch_num} (page {cur_page}, {len(batch_venues)} products)", "INFO")
+                                    product_tasks = [
+                                        process_single_product(
+                                            venue=venue,
+                                            site=site,
+                                            browser_config=browser_config,
+                                            pdf_llm_strategy=pdf_llm_strategy,
+                                            regex_strategy=regex_strategy,
+                                            api_key=api_key,
+                                            session_id=session_id,
+                                            domain_name=domain_name,
+                                            semaphore=product_semaphore,
+                                            stop_requested_callback=stop_requested_callback,
+                                            page_number=cur_page,
+                                            cookies=cookies,
+                                            headers=headers,
+                                            preserve_product_name=venue.get('productName'),  # Preserve API product name
+                                        )
+                                        for venue in batch_venues
+                                    ]
+                                    
+                                    results = await asyncio.gather(*product_tasks, return_exceptions=True)
+                                    for result in results:
+                                        if isinstance(result, Exception):
+                                            log_message(f"❌ Product processing raised exception: {str(result)}", "ERROR")
+                                            # Create error entry for exception
+                                            page_errors.append({
+                                                "page_number": cur_page,
+                                                "cat_name": site.get("cat_name", "Unknown"),
+                                                "productName": "Unknown",
+                                                "productLink": "Unknown",
+                                                "error_type": "processing_exception",
+                                                "http_status": "N/A",
+                                                "error_message": f"Exception: {str(result)}"
                                             })
-                                        else:
-                                            log_message(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")
-                                    if not page_venues:
-                                        log_message(f"✅ No valid products on page {cur_page} for '{domain_name}'", "INFO")
-                                        break
-                                    stats["api_products"] += len(page_venues)
-                                    total_api_products += len(page_venues)
-                                    log_message(f"✅ Fetched {len(page_venues)} products from API page {cur_page} for '{domain_name}'", "SUCCESS")
-                                    
-                                    # Error tracking for this page
-                                    page_errors = []
-                                    
-                                    # Process batch as before
-                                    BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '1'))
-                                    total_products = len(page_venues)
-                                    product_idx = 0
-                                    batch_num = 1
-                                    while product_idx < total_products:
-                                        batch_venues = page_venues[product_idx : product_idx + BATCH_SIZE]
-                                        log_message(f"⚡ [API] Processing batch {batch_num} (page {cur_page}, {len(batch_venues)} products)", "INFO")
-                                        product_tasks = [
-                                            process_single_product(
-                                                venue=venue,
-                                                site=site,
-                                                browser_config=browser_config,
-                                                pdf_llm_strategy=pdf_llm_strategy,
-                                                regex_strategy=regex_strategy,
-                                                api_key=api_key,
-                                                session_id=session_id,
-                                                domain_name=domain_name,
-                                                semaphore=product_semaphore,
-                                                stop_requested_callback=stop_requested_callback,
-                                                page_number=cur_page,
-                                                cookies=cookies,
-                                                headers=headers,
-                                            )
-                                            for venue in batch_venues
-                                        ]
-                                        results = await asyncio.gather(*product_tasks, return_exceptions=True)
-                                        for result in results:
-                                            if isinstance(result, Exception):
-                                                log_message(f"❌ Product processing raised exception: {str(result)}", "ERROR")
-                                                # Create error entry for exception
-                                                page_errors.append({
-                                                    "page_number": cur_page,
-                                                    "cat_name": site.get("cat_name", "Unknown"),
-                                                    "productName": "Unknown",
-                                                    "productLink": "Unknown",
-                                                    "error_type": "processing_exception",
-                                                    "http_status": "N/A",
-                                                    "error_message": f"Exception: {str(result)}"
-                                                })
-                                            elif result:
-                                                # Result is tuple: (summary, error)
-                                                summary, error = result
-                                                if summary:
-                                                    cat_summaries.append(summary)
-                                                if error:
-                                                    page_errors.append(error)
-                                        log_message(f"✅ [API] Completed batch {batch_num} ({min(product_idx+BATCH_SIZE, total_products)}/{total_products} products) on page {cur_page}", "INFO")
-                                        product_idx += BATCH_SIZE
-                                        batch_num += 1
-                                        if product_idx < total_products:
-                                            await asyncio.sleep(5)
-                                    log_message(f"✅ [API] Completed all batches for {len(page_venues)} products on page {cur_page}", "INFO")
-                                    
-                                    # Write per-page error report if there are errors
-                                    if page_errors:
-                                        try:
-                                            os.makedirs("ERROR_REPORTS", exist_ok=True)
-                                            from datetime import datetime
-                                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                            domain_sanitized = sanitize_folder_name(domain_name)
-                                            error_csv = os.path.join("ERROR_REPORTS", f"errors_{domain_sanitized}_page_{cur_page}_{ts}.csv")
-                                            
-                                            with open(error_csv, "w", newline="", encoding="utf-8") as f:
-                                                fieldnames = ["page_number", "cat_name", "productName", "productLink", "error_type", "http_status", "error_message"]
-                                                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                                                writer.writeheader()
-                                                for error in page_errors:
-                                                    writer.writerow(error)
-                                            
-                                            log_message(f"📋 [API] Wrote error report: {error_csv} ({len(page_errors)} errors)", "WARNING")
-                                        except Exception as e:
-                                            log_message(f"⚠️ Failed to write error report for page {cur_page}: {e}", "ERROR")
-                                    else:
-                                        log_message(f"✅ [API] No errors on page {cur_page}", "INFO")
-                                    
-                                    for v in page_venues:
-                                        v["category"] = site["cat_name"]
-                                        category_to_products.setdefault(site["cat_name"], []).append(v)
-                                    all_venues.extend(page_venues)
-                                    if status_callback:
-                                        status_callback({
-                                            'total_venues': len(all_venues),
-                                            'current_page': cur_page
-                                        })
-                            except asyncio.TimeoutError:
-                                log_message(f"⏱️ Timeout fetching page {cur_page} for {domain_name}", "ERROR")
-                                break
-                            except aiohttp.ClientError as e:
-                                log_message(f"❌ Network error fetching page {cur_page} for {domain_name}: {str(e)}", "ERROR")
-                                break
-                            except json.JSONDecodeError as e:
-                                log_message(f"❌ Invalid JSON response for page {cur_page} of {domain_name}: {str(e)}", "ERROR")
-                                break
+                                        elif result:
+                                            # Result is tuple: (summary, error)
+                                            summary, error = result
+                                            if summary:
+                                                cat_summaries.append(summary)
+                                            if error:
+                                                page_errors.append(error)
+                                    log_message(f"✅ [API] Completed batch {batch_num} ({min(product_idx+BATCH_SIZE, total_products)}/{total_products} products) on page {cur_page}", "INFO")
+                                    product_idx += BATCH_SIZE
+                                    batch_num += 1
+                                    if product_idx < total_products:
+                                        await asyncio.sleep(5)
+                                log_message(f"✅ [API] Completed all batches for {len(page_venues)} products on page {cur_page}", "INFO")
+                                
+                                # Write per-page error report if there are errors
+                                if page_errors:
+                                    try:
+                                        os.makedirs("ERROR_REPORTS", exist_ok=True)
+                                        from datetime import datetime
+                                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                        domain_sanitized = sanitize_folder_name(domain_name)
+                                        error_csv = os.path.join("ERROR_REPORTS", f"errors_{domain_sanitized}_page_{cur_page}_{ts}.csv")
+                                        
+                                        with open(error_csv, "w", newline="", encoding="utf-8") as f:
+                                            fieldnames = ["page_number", "cat_name", "productName", "productLink", "error_type", "http_status", "error_message"]
+                                            writer = csv.DictWriter(f, fieldnames=fieldnames)
+                                            writer.writeheader()
+                                            for error in page_errors:
+                                                writer.writerow(error)
+                                        
+                                        log_message(f"📋 [API] Wrote error report: {error_csv} ({len(page_errors)} errors)", "WARNING")
+                                    except Exception as e:
+                                        log_message(f"⚠️ Failed to write error report for page {cur_page}: {e}", "ERROR")
+                                else:
+                                    log_message(f"✅ [API] No errors on page {cur_page}", "INFO")
+                                
+                                for v in page_venues:
+                                    v["category"] = site["cat_name"]
+                                    category_to_products.setdefault(site["cat_name"], []).append(v)
+                                all_venues.extend(page_venues)
+                                if status_callback:
+                                    status_callback({
+                                        'total_venues': len(all_venues),
+                                        'current_page': cur_page
+                                    })
                             except Exception as e:
                                 log_message(f"❌ Unexpected error fetching page {cur_page} for {domain_name}: {str(e)}", "ERROR")
                                 break
                             cur_page += 1
-                    log_message(f"✅ [API] Fetched and processed {total_api_products} total products for '{domain_name}'", "SUCCESS")
+                        
+                        log_message(f"✅ [API] Fetched and processed {total_api_products} total products for '{domain_name}'", "SUCCESS")
+                    
+                    finally:
+                        # Always cleanup the browser context
+                        log_message(f"🧹 Cleaning up unified browser context for {domain_name}", "INFO")
+                        await close_unified_browser_context(browser_ctx)
                     
                     # Tag venues with category
                     for v in all_venues:

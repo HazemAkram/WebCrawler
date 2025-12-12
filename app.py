@@ -28,6 +28,10 @@ from config import DEFAULT_CONFIG, ENV_VARS
 
 app = Flask(__name__)
 
+# --- Persistent Log Directory ---
+LOG_DIR = 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
+
 # SECURITY: Generate a random secret key instead of using a hardcoded one
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -57,8 +61,15 @@ crawling_status = {
 import queue
 log_queue = queue.Queue()
 
+def write_log_to_disk(log_entry):
+    """Appends a log entry to today's persistent log file with timestamp, level, message."""
+    log_path = os.path.join(LOG_DIR, f"crawler_{datetime.now().strftime('%Y%m%d')}.log")
+    line = f"{log_entry['timestamp']} [{log_entry['level']}] {log_entry['message']}\n"
+    with open(log_path, 'a', encoding='utf-8') as f:
+        f.write(line)
+
 def log_message(message, level="INFO"):
-    """Add a log message to the queue"""
+    """Add a log message to the queue and persist it to disk"""
     timestamp = datetime.now().strftime("%H:%M:%S")
     log_entry = {
         'timestamp': timestamp,
@@ -67,7 +78,7 @@ def log_message(message, level="INFO"):
     }
     log_queue.put(log_entry)
     crawling_status['logs'].append(log_entry)
-    
+    write_log_to_disk(log_entry)
     # Keep only last 1000 logs
     if len(crawling_status['logs']) > 1000:
         crawling_status['logs'] = crawling_status['logs'][-1000:]
@@ -317,8 +328,53 @@ def get_status():
 
 @app.route('/logs')
 def get_logs():
-    """Get all logs"""
-    return jsonify({'logs': crawling_status['logs']})
+    """Return the last 200 logs from today's persistent crawler log file, or from memory if unavailable."""
+    log_path = os.path.join(LOG_DIR, f"crawler_{datetime.now().strftime('%Y%m%d')}.log")
+    logs = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()[-200:]
+            for line in lines:
+                # Attempt to split line into timestamp [LEVEL] message
+                try:
+                    ts, rest = line.split(' ', 1)
+                    level = rest[rest.find('[')+1:rest.find(']')]
+                    msg = rest[rest.find(']')+2:].strip()
+                    logs.append({
+                        'timestamp': ts,
+                        'level': level,
+                        'message': msg
+                    })
+                except Exception:
+                    logs.append({'timestamp': '', 'level': '', 'message': line.strip()})
+        except Exception:
+            # If file read error, fallback to in-memory
+            logs = crawling_status['logs'][-200:]
+    else:
+        logs = crawling_status['logs'][-200:]
+    return jsonify({'logs': logs})
+
+@app.route('/logs-b')
+def get_logs_b():
+    """Return the last 200 logs from today's b_service log file (webcrawler-b service)."""
+    log_path = os.path.join(LOG_DIR, f"b_service_{datetime.now().strftime('%Y%m%d')}.log")
+    logs = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()[-200:]
+            for line in lines:
+                try:
+                    ts, rest = line.split(' ', 1)
+                    level = rest[rest.find('[')+1:rest.find(']')]
+                    msg = rest[rest.find(']')+2:].strip()
+                    logs.append({'timestamp': ts, 'level': level, 'message': msg})
+                except Exception:
+                    logs.append({'timestamp': '', 'level': '', 'message': line.strip()})
+        except Exception:
+            logs = []
+    return jsonify({'logs': logs})
 
 @app.route('/archives/<path:filename>')
 def serve_archive(filename):

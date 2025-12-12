@@ -202,11 +202,11 @@ See NOTICE file for additional terms and conditions.
                 </div>
 
 
-                <!-- Logs Section -->
+                <!-- Logs Section (Tabbed for Main and B Service) -->
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <div>
-                            <i class="fas fa-terminal"></i> Processing Logs
+                            <i class="fas fa-terminal"></i> Logs
                         </div>
                         <div>
                             <a href="/files" class="btn btn-sm btn-success me-2" target="_blank">
@@ -224,10 +224,28 @@ See NOTICE file for additional terms and conditions.
                         </div>
                     </div>
                     <div class="card-body">
-                        <div class="log-container" id="logContainer">
-                            <div class="log-entry">
-                                <span class="log-timestamp">[System]</span>
-                                <span class="log-info">Web crawler interface ready. Upload a CSV file to begin.</span>
+                        <ul class="nav nav-tabs mb-3" id="logTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="main-logs-tab" data-bs-toggle="tab" data-bs-target="#main-logs-pane" type="button" role="tab" aria-controls="main-logs-pane" aria-selected="true">
+                                    Processing Logs
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="b-logs-tab" data-bs-toggle="tab" data-bs-target="#b-logs-pane" type="button" role="tab" aria-controls="b-logs-pane" aria-selected="false">
+                                    B Service Logs
+                                </button>
+                            </li>
+                        </ul>
+                        <div class="tab-content" id="logTabContent">
+                            <div class="tab-pane fade show active log-container" id="main-logs-pane" role="tabpanel" aria-labelledby="main-logs-tab">
+                                <div id="logContainer">
+                                    <div class="log-entry"><span class="log-timestamp">[System]</span> <span class="log-info">Web crawler interface ready. Upload a CSV file to begin.</span></div>
+                                </div>
+                            </div>
+                            <div class="tab-pane fade log-container" id="b-logs-pane" role="tabpanel" aria-labelledby="b-logs-tab">
+                                <div id="logBContainer">
+                                    <div class="log-entry"><span class="log-timestamp">[System]</span> <span class="log-info">B Service log panel ready.</span></div>
+                                </div>
                             </div>
                         </div>
                     </div>

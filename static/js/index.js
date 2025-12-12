@@ -374,9 +374,47 @@ function stopOutputStatsPolling() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', function () { 
-    updateStatus('idle'); 
-    startOutputStatsPolling();
+// --- Log Rendering and Polling for Main and B Service Logs ---
+function renderLogs(logs, containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+  logs.forEach(log => {
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `<span class="log-timestamp">${log.timestamp ? '['+log.timestamp+']' : ''}</span> <span class="log-${(log.level||'').toLowerCase()}">[${log.level||''}] ${log.message}</span>`;
+    container.appendChild(entry);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function loadMainLogs() {
+  fetch('/logs')
+    .then(res => res.json())
+    .then(data => {
+      renderLogs(data.logs || [], 'logContainer');
+    });
+}
+
+function loadBLogs() {
+  fetch('/logs-b')
+    .then(res => res.json())
+    .then(data => {
+      renderLogs(data.logs || [], 'logBContainer');
+    });
+}
+
+setInterval(() => {
+  if (document.getElementById('main-logs-pane')?.classList.contains('active')) loadMainLogs();
+  if (document.getElementById('b-logs-pane')?.classList.contains('active')) loadBLogs();
+}, 3000);
+
+document.getElementById('main-logs-tab')?.addEventListener('click', loadMainLogs);
+document.getElementById('b-logs-tab')?.addEventListener('click', loadBLogs);
+
+document.addEventListener('DOMContentLoaded', function () {
+  loadMainLogs();
+  loadBLogs();
 });
 
 

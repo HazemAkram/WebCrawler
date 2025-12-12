@@ -200,45 +200,45 @@ async def process_single_product(
         product_name = venue.get('productName', 'Unknown')
         
         # First, check if product page is accessible
-        try:
-            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True), cookies=cookies, headers=headers) as check_session:
-                async with check_session.head(product_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as response:
-                    if response.status >= 400:
-                        error_info = {
-                            "page_number": page_number,
-                            "cat_name": site.get("cat_name", "Unknown"),
-                            "productName": product_name,
-                            "productLink": product_url,
-                            "error_type": "product_page_access",
-                            "http_status": response.status,
-                            "error_message": f"HTTP {response.status}: {response.reason}"
-                        }
-                        log_message(f"❌ Product page inaccessible: {product_url} (HTTP {response.status})", "ERROR")
-                        # return None, error_info
-        except asyncio.TimeoutError:
-            error_info = {
-                "page_number": page_number,
-                "cat_name": site.get("cat_name", "Unknown"),
-                "productName": product_name,
-                "productLink": product_url,
-                "error_type": "product_page_timeout",
-                "http_status": "N/A",
-                "error_message": "Timeout checking product page accessibility"
-            }
-            log_message(f"⏱️ Timeout checking product page: {product_url}", "ERROR")
-            return None, error_info
-        except Exception as e:
-            error_info = {
-                "page_number": page_number,
-                "cat_name": site.get("cat_name", "Unknown"),
-                "productName": product_name,
-                "productLink": product_url,
-                "error_type": "product_page_error",
-                "http_status": "N/A",
-                "error_message": f"Error checking page: {str(e)}"
-            }
-            log_message(f"❌ Error checking product page {product_url}: {str(e)}", "ERROR")
-            return None, error_info
+        # try:
+        #     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True), cookies=cookies, headers=headers) as check_session:
+        #         async with check_session.head(product_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as response:
+        #             if response.status >= 400:
+        #                 error_info = {
+        #                     "page_number": page_number,
+        #                     "cat_name": site.get("cat_name", "Unknown"),
+        #                     "productName": product_name,
+        #                     "productLink": product_url,
+        #                     "error_type": "product_page_access",
+        #                     "http_status": response.status,
+        #                     "error_message": f"HTTP {response.status}: {response.reason}"
+        #                 }
+        #                 log_message(f"❌ Product page inaccessible: {product_url} (HTTP {response.status})", "ERROR")
+        #                 # return None, error_info
+        # except asyncio.TimeoutError:
+        #     error_info = {
+        #         "page_number": page_number,
+        #         "cat_name": site.get("cat_name", "Unknown"),
+        #         "productName": product_name,
+        #         "productLink": product_url,
+        #         "error_type": "product_page_timeout",
+        #         "http_status": "N/A",
+        #         "error_message": "Timeout checking product page accessibility"
+        #     }
+        #     log_message(f"⏱️ Timeout checking product page: {product_url}", "ERROR")
+        #     return None, error_info
+        # except Exception as e:
+        #     error_info = {
+        #         "page_number": page_number,
+        #         "cat_name": site.get("cat_name", "Unknown"),
+        #         "productName": product_name,
+        #         "productLink": product_url,
+        #         "error_type": "product_page_error",
+        #         "http_status": "N/A",
+        #         "error_message": f"Error checking page: {str(e)}"
+        #     }
+        #     log_message(f"❌ Error checking product page {product_url}: {str(e)}", "ERROR")
+        #     return None, error_info
         
         # Create dedicated crawler for this product
         try:

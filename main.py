@@ -432,6 +432,8 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 
                                 # Error tracking for this page
                                 page_errors = []
+                                # Summary tracking for per-page CSV report
+                                page_summaries = []
                                 
                                 # Process batch as before
                                 BATCH_SIZE = int(os.environ.get('BATCH_SIZE', '1'))
@@ -480,6 +482,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                             summary, error = result
                                             if summary:
                                                 cat_summaries.append(summary)
+                                                page_summaries.append(summary)  # Track for per-page CSV
                                             if error:
                                                 page_errors.append(error)
                                     log_message(f"✅ [API] Completed batch {batch_num} ({min(product_idx+BATCH_SIZE, total_products)}/{total_products} products) on page {cur_page}", "INFO")
@@ -510,6 +513,52 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                         log_message(f"⚠️ Failed to write error report for page {cur_page}: {e}", "ERROR")
                                 else:
                                     log_message(f"✅ [API] No errors on page {cur_page}", "INFO")
+                                
+                                # Write per-page CSV report with product summaries
+                                try:
+                                    os.makedirs("CSVS", exist_ok=True)
+                                    cat_sanitized = sanitize_folder_name(site.get("cat_name", "Unknown"))
+                                    csv_filename = os.path.join("CSVS", f"download_{cat_sanitized}_{cur_page}.csv")
+                                    
+                                    with open(csv_filename, "w", newline="", encoding="utf-8") as f:
+                                        fieldnames = ["product_URL", "product_name", "server_respond", "file_count"]
+                                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                                        writer.writeheader()
+                                        
+                                        # Create a set of processed product URLs to avoid duplicates
+                                        processed_urls = set()
+                                        
+                                        # Write summary for each successfully processed product
+                                        for summary in page_summaries:
+                                            if summary:  # Only write if summary exists
+                                                product_url = summary.get("productLink", "Unknown")
+                                                processed_urls.add(product_url)
+                                                
+                                                # Determine server response status
+                                                server_respond = "Success" if summary.get("saved_count", 0) > 0 else "No files found"
+                                                
+                                                writer.writerow({
+                                                    "product_URL": product_url,
+                                                    "product_name": summary.get("productName", "Unknown"),
+                                                    "server_respond": server_respond,
+                                                    "file_count": summary.get("saved_count", 0)
+                                                })
+                                        
+                                        # Write entries for products that had errors
+                                        for error in page_errors:
+                                            product_url = error.get("productLink", "Unknown")
+                                            # Only add if not already processed successfully
+                                            if product_url not in processed_urls:
+                                                writer.writerow({
+                                                    "product_URL": product_url,
+                                                    "product_name": error.get("productName", "Unknown"),
+                                                    "server_respond": f"Error: {error.get('error_type', 'Unknown')}",
+                                                    "file_count": 0
+                                                })
+                                    
+                                    log_message(f"📊 [API] Wrote page report: {csv_filename} ({len(page_summaries)} successful, {len(page_errors)} errors)", "INFO")
+                                except Exception as e:
+                                    log_message(f"⚠️ Failed to write CSV report for page {cur_page}: {e}", "ERROR")
                                 
                                 for v in page_venues:
                                     v["category"] = site["cat_name"]

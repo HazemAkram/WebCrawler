@@ -100,6 +100,8 @@ async def create_unified_browser_context(domain_url: str):
                 "--disable-gpu",
                 "--disable-features=VizDisplayCompositor",
                 "--max_old_space_size=4096",
+                "--window-size=1920,1080",
+
             ]
         )
         
@@ -225,6 +227,7 @@ async def get_browser_cookies_for_domain(domain_url: str) -> dict:
                     "--disable-gpu",
                     "--disable-features=VizDisplayCompositor",
                     "--max_old_space_size=4096",
+                    "--window-size=1920,1080",
                 ]
             )
             

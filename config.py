@@ -47,31 +47,46 @@ DEFAULT_CONFIG = {
         "max_js_pagination_clicks": 100,
     },
     "pdf_settings": {
-        "max_file_size_mb": 60,  # Maximum PDF file size to download
+        "max_file_size_mb": 300,  # Maximum PDF file size to download
         "skip_large_files": True,  # Whether to skip files larger than max_file_size_mb
         "allowed_types": [
             "Data Sheet",
             "Technical Drawing",
             "User Manual",
+            "Operating manual",
             "Installation Guide",
             "Application guide",
+            "Interface description",
+            "Supplementary instructions",
             "Design guide",
             "User guide",
+            "Order information",
+            "Brochure",
             "Generic",
             "CAD",
             "ZIP",
             "Catalog",
             "EDZ"
         ],
+        "disallowed_types": [
+            "Demo Version",
+            "Free version",
+            "30 days Test Version",
+        ],
         "per_type_limits": {
             "Data Sheet": 2,
             "Technical Drawing": 4,
             "User Manual": 2,
+            "Operating manual": 2,
             "Installation Guide": 2,
+            "Interface description": 2,
             "User guide": 2,
             "Application guide": 2,
+            "Supplementary instructions": 2,
             "Design guide": 2,
-            "Generic": 1,
+            "Order information": 2,
+            "Brochure": 2,
+            "Generic": 3,
             "CAD": 2,
             "ZIP": 1,
             "Catalog": 2,

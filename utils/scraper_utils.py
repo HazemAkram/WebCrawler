@@ -95,11 +95,15 @@ async def create_unified_browser_context(domain_url: str):
         browser = await playwright.chromium.launch(
             headless=True,
             args=[
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-features=VizDisplayCompositor",
-                "--max_old_space_size=4096",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-web-security",
+                "--disable-site-isolation-trials",
+                "--allow-insecure-localhost",
                 "--window-size=1920,1080",
 
             ]
@@ -222,12 +226,16 @@ async def get_browser_cookies_for_domain(domain_url: str) -> dict:
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
-                    "--no-sandbox",
-                    "--disable-dev_shm-usage",
-                    "--disable-gpu",
-                    "--disable-features=VizDisplayCompositor",
-                    "--max_old_space_size=4096",
-                    "--window-size=1920,1080",
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "--no-sandbox",
+                "--disable-dev_shm-usage",
+                "--disable-gpu",
+                "--disable-features=VizDisplayCompositor",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-web-security",
+                "--disable-site-isolation-trials",
+                "--allow-insecure-localhost",
+                "--window-size=1920,1080",
                 ]
             )
             
@@ -688,13 +696,11 @@ def generate_product_name_js_commands(primary_selector: str) -> str:
     return f"""
 
         try{{
-            var btn = document.querySelectorAll("div.Collapsible_trigger__eN27y")[3];
-            
-            if (btn) {{
-                btn.click();
-                console.log('[JS] Button clicked');
-                await new Promise(r => setTimeout(r, 3000));
-            }}
+            console.log('[JS] Starting button extraction...');
+            await new Promise(r => setTimeout(r, 3000));
+            document.querySelectorAll("li[role='presentation'] > a[href='#downloads']")[0].click();
+            console.log('[JS] Button clicked');
+            await new Promise(r => setTimeout(r, 3000));
         }} catch (error) {{
             console.log('[JS] Error with button extraction:', error.message);
         }}
@@ -1801,6 +1807,7 @@ async def download_pdf_links(
         pdf_cfg = DEFAULT_CONFIG.get("pdf_settings", {})
         allowed_types = set(t.lower() for t in pdf_cfg.get("allowed_types", [])) if pdf_cfg else set()
         per_type_limits = {k.lower(): v for k, v in (pdf_cfg.get("per_type_limits", {}) or {}).items()}
+        disallowed_types = set(t.lower() for t in pdf_cfg.get("disallowed_types", [])) if pdf_cfg else set()
         per_type_counts: dict[str, int] = {}
         # Collect all candidates first so we can re-order within each type by language & priority
         candidates: list[dict] = []
@@ -1828,7 +1835,7 @@ async def download_pdf_links(
             # Allowed types filtering (by semantic type string from LLM)
             item_type = (item.get('type') or 'Unknown').strip()
             item_type_lc = item_type.lower()
-            if allowed_types and item_type_lc not in allowed_types:
+            if (allowed_types and item_type_lc not in allowed_types) or (disallowed_types and item_type_lc in disallowed_types):
                 log_message(f"⏭️ Skipping disallowed type: {item_type}", "INFO")
                 continue
 
@@ -2154,7 +2161,7 @@ async def download_pdf_links(
                                 lowered = os.path.basename(save_path).lower()
                                 cert_terms = [
                                     'certificate','certification','certifications','iso','tse', 'declaration', 'Garanti', 'Garanti Belgisi', 'Generic - Garanti Belgesi'
-                                    'coc','iec','emc','ped','fda','rohs','iecex','csa','warranty','contacts','list of ifm contacts','list of contacts'
+                                    'coc','iec','emc','fda','rohs','iecex','csa','warranty','contacts','list of ifm contacts','list of contacts'
                                 ]
                                 if any(term in lowered for term in cert_terms): 
                                     try: 
@@ -2659,12 +2666,20 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
     Returns:
         LLMExtractionStrategy: The settings for how to extract PDF links using LLM.
     """
+    # Allowed and disallowed types filtering
+    pdf_cfg = DEFAULT_CONFIG.get("pdf_settings", {})
+    allowed_types = set(t.lower() for t in pdf_cfg.get("allowed_types", [])) if pdf_cfg else set()
+    disallowed_types = set(t.lower() for t in pdf_cfg.get("disallowed_types", [])) if pdf_cfg else set()
+
+
     # Use provided API key or fall back to environment variable
     if api_key is None:
         api_key = os.getenv('GROQ_API_KEY')
     
     if not api_key:
         raise ValueError("API key is required. Please provide an API key or set GROQ_API_KEY environment variable.")
+
+    
     
     # https://docs.crawl4ai.com/api/strategies/#llmextractionstrategy
     return LLMExtractionStrategy(
@@ -2684,10 +2699,12 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             "- url: absolute link to the file. Convert relative links using the page domain.\n"
             "    - Do not add any escape characters to the url.\n"
             "- text: the link text, button text describing the file or file name.\n"
-            "- type: one of Data Sheet, Installation Guide, Technical Drawing, User Manual, Catalog, CAD, ZIP, EDZ, STEP, STP, IGES, DWG, DXF, STL, or Generic.\n"
+            "- type: one of {allowed_types}.\n"
             "    - For any file labeled with install/installing/setup/commissioning/mounting/start/assembly, use type 'Installation Guide' if the document's main focus is installation or mounting.\n"
             "    - If any file could match both Installation Guide and User Manual, prefer Installation Guide as the type.\n"
             "    - If one file type has more than one language, return just one file with the most common language.\n"
+            " - disallowed_types: one of {disallowed_types}.\n"
+            "    - If the file type is in the disallowed_types, do not extract it.\n"
             "- language: language code like EN/DE/TR or Unknown.\n"
             "- priority: High for Data Sheet, Installation Guide, User Manual, Technical Drawing, and CAD; Medium for Catalog, ZIP.\n"
             "   - 'Installation Guide' documents are always High priority.\n"

@@ -413,7 +413,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                             if end_page and cur_page > end_page:
                                 break
                             
-                            log_message(f"🟦 [API] Fetching page {cur_page} for domain '{domain_name}'", "INFO")
+                            log_message(f"🟦 [API] Fetching page {cur_page} for domain '{domain_name}' from {start_page} to {end_page}", "INFO")
                             
                             try:
                                 # Fetch products using the unified browser context
@@ -424,11 +424,11 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 )
                                 
                                 if not page_venues:
-                                    log_message(f"✅ No products or end of pagination for domain '{domain_name}' at page {cur_page}", "INFO")
+                                    log_message(f"✅ No products or end of pagination for domain '{domain_name}' at page {cur_page} from {start_page} to {end_page}", "INFO")
                                     break
                                 stats["api_products"] += len(page_venues)
                                 total_api_products += len(page_venues)
-                                log_message(f"✅ Fetched {len(page_venues)} products from API page {cur_page} for '{domain_name}'", "SUCCESS")
+                                log_message(f"✅ Fetched {len(page_venues)} products from API page {cur_page} for '{domain_name}' from {start_page} to {end_page}", "SUCCESS")
                                 
                                 # Error tracking for this page
                                 page_errors = []
@@ -442,7 +442,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 batch_num = 1
                                 while product_idx < total_products:
                                     batch_venues = page_venues[product_idx : product_idx + BATCH_SIZE]
-                                    log_message(f"⚡ [API] Processing batch {batch_num} (page {cur_page}, {len(batch_venues)} products)", "INFO")
+                                    log_message(f"⚡ [API] Processing batch {batch_num} (page {cur_page}, {len(batch_venues)} products) from {start_page} to {end_page}", "INFO")
                                     product_tasks = [
                                         process_single_product(
                                             venue=venue,

@@ -72,6 +72,9 @@ DEFAULT_CONFIG = {
             "Demo Version",
             "Free version",
             "30 days Test Version",
+            "Declaration of conformity",
+            "Press release",
+            "Certificate",
         ],
         "per_type_limits": {
             "Data Sheet": 2,

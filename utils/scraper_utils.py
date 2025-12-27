@@ -32,6 +32,22 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import re
 
 # AI-powered PDF processing is now handled automatically in cleaner.py
+
+def make_config_type_filename(file_type, file_language, ext, folder_path):
+    allowed_types = DEFAULT_CONFIG.get("pdf_settings", {}).get("allowed_types", [])
+    # Find the closest case-insensitive match, fallback to 'Generic'
+    config_type = next((t for t in allowed_types if t.lower() == (file_type or '').lower()), "Generic")
+    # Normalize for filename
+    type_part = config_type.replace(' ', '_')
+    lang_part = file_language.upper() if file_language else "UNKNOWN"
+    base_name = f"{type_part} ({lang_part})"
+    filename = f"{base_name}.{ext}"
+    index = 1
+    while os.path.exists(os.path.join(folder_path, filename)):
+        index += 1
+        filename = f"{base_name}_{index}.{ext}"
+    return sanitize_filename(filename)
+
 from cleaner import pdf_processing
 from dotenv import load_dotenv
 
@@ -2008,9 +2024,8 @@ async def download_pdf_links(
                     previous_path = download_pdf_links.downloaded_files[file_url]
                     if os.path.exists(previous_path):
                         try:
-                            # Generate filename using generic helper
-                            filename = generate_generic_filename_from_llm_text(file_text, file_type, file_language, derived_product_name, file_ext or 'bin')
-                            filename = filename.replace('\\', '_').replace('/', '_')
+                            # Always use allowed_types from config for filename base
+                            filename = make_config_type_filename(file_type, file_language, file_ext or 'bin', productPath)
                             save_path = os.path.join(productPath, filename)
                             
                             # Ensure product folder exists before copying (in case it wasn't created earlier)
@@ -2132,23 +2147,10 @@ async def download_pdf_links(
                                 download_pdf_links.content_hashes = set()
                             download_pdf_links.content_hashes.add(content_hash)
                             
-                            # Determine filename: prefer Content-Disposition, else generated
-                            if cd_filename:
-                                cd_filename = sanitize_filename(cd_filename)
-                                # Ensure extension present and matches detected
-                                if file_ext and not cd_filename.lower().endswith(f'.{file_ext}'):
-                                    base = cd_filename.rsplit('.', 1)[0] if '.' in cd_filename else cd_filename
-                                    filename = f"{base}.{file_ext}"
-                                else:
-                                    filename = cd_filename
-                            else:
-                                filename = generate_generic_filename_from_llm_text(file_text, file_type, file_language, derived_product_name, file_ext or 'bin')
-                            filename = filename.replace('\\', '_').replace('/', '_')
-                            
-                            # Ensure filename has proper extension
-                            if not filename.lower().endswith(f'.{file_ext}'):
-                                filename = f"{filename.rsplit('.', 1)[0]}.{file_ext}" if '.' in filename else f"{filename}.{file_ext}"
-                            
+                            # Always use allowed_types from config for filename base
+                            filename = make_config_type_filename(file_type, file_language, file_ext or 'bin', productPath)
+
+                            # Filename is already unique and final from make_config_type_filename
                             save_path = os.path.join(productPath, filename)
                             
                             # Save the file
@@ -2671,7 +2673,6 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
     allowed_types = set(t.lower() for t in pdf_cfg.get("allowed_types", [])) if pdf_cfg else set()
     disallowed_types = set(t.lower() for t in pdf_cfg.get("disallowed_types", [])) if pdf_cfg else set()
 
-
     # Use provided API key or fall back to environment variable
     if api_key is None:
         api_key = os.getenv('GROQ_API_KEY')
@@ -2702,7 +2703,6 @@ def get_pdf_llm_strategy(api_key: str = None, model: str = "groq/llama-3.1-8b-in
             "- type: one of {allowed_types}.\n"
             "    - For any file labeled with install/installing/setup/commissioning/mounting/start/assembly, use type 'Installation Guide' if the document's main focus is installation or mounting.\n"
             "    - If any file could match both Installation Guide and User Manual, prefer Installation Guide as the type.\n"
-            "    - If one file type has more than one language, return just one file with the most common language.\n"
             " - disallowed_types: one of {disallowed_types}.\n"
             "    - If the file type is in the disallowed_types, do not extract it.\n"
             "- language: language code like EN/DE/TR or Unknown.\n"

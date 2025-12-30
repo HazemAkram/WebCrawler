@@ -2018,8 +2018,16 @@ async def download_pdf_links(
             headers=request_headers,
         ) as session: # try to add headers to the request 
 
+            try:
+                to_remove = product_url.replace("https://www.dcdbaltur.com.tr", "")
+            except Exception as e:
+                log_message(f"⚠️ Error removing product URL from file URL: {str(e)}", "WARNING")
+                to_remove = False
+            
             for i, file_info in enumerate(all_files, 1):
                 file_url = file_info['url']
+                if to_remove == False:
+                    file_url = file_url.replace(to_remove, "/")
                 file_text = file_info['text']
                 file_type = file_info['type']
                 file_language = normalize_language_code(file_info.get('language', 'Unknown'))

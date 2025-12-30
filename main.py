@@ -106,6 +106,22 @@ def read_sites_from_csv(input_file):
             else:
                 start_page = 1
                 end_page = None
+            
+            # ---- NEW (START PRODUCT INDEX) ----
+            start_product_raw = row.get('start_product', '').strip()
+            # Parse start_product index (0-based, defaults to 0)
+            if start_product_raw:
+                try:
+                    start_product_index = int(start_product_raw)
+                    if start_product_index < 0:
+                        log_message(f"   ⚠️ Row {count-1}: Invalid start_product '{start_product_raw}' (must be >= 0), using 0", "WARNING")
+                        start_product_index = 0
+                except ValueError:
+                    log_message(f"   ⚠️ Row {count-1}: Invalid start_product '{start_product_raw}', using 0", "WARNING")
+                    start_product_index = 0
+            else:
+                start_product_index = 0
+            
             # Build site config based on mode
             if mode == "api":
                 # Check if browser cookie extraction should be used (default: True)
@@ -120,6 +136,7 @@ def read_sites_from_csv(input_file):
                     "pdf_button_selector": pdf_button_selector,
                     "start_page": start_page,
                     "end_page": end_page,
+                    "start_product_index": start_product_index,
                     "use_browser_cookies": use_browser_cookies,
                 })
             else:  # html mode
@@ -407,8 +424,14 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
 
                         start_page = site.get("start_page", 1)
                         end_page = site.get("end_page")
+                        start_product_index = site.get("start_product_index", 0)
                         cur_page = start_page
                         total_api_products = 0
+                        
+                        # Log start_product_index if it's being used
+                        if start_product_index > 0:
+                            log_message(f"🎯 [API] Starting from product index {start_product_index} for domain '{domain_name}'", "INFO")
+                        
                         while True:
                             if end_page and cur_page > end_page:
                                 break
@@ -417,10 +440,14 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                             
                             try:
                                 # Fetch products using the unified browser context
+                                # Only apply start_product_index on the first page
+                                current_start_index = start_product_index if cur_page == start_page else 0
+                                
                                 page_venues = await fetch_products_from_api_via_browser(
                                     domain_name=domain_name,
                                     page_number=cur_page,
-                                    browser_context=browser_ctx
+                                    browser_context=browser_ctx,
+                                    start_from_product_index=current_start_index
                                 )
                                 
                                 if not page_venues:

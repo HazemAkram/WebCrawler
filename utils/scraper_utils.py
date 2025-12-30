@@ -342,7 +342,8 @@ async def get_browser_cookies_for_domain(domain_url: str) -> dict:
 async def fetch_products_from_api_via_browser(
     domain_name: str, 
     page_number: int,
-    browser_context: dict
+    browser_context: dict,
+    start_from_product_index: int = 0,
 ) -> List[dict]:
     """
     Fetch products for a given domain and page from the API using Playwright browser context.
@@ -352,9 +353,11 @@ async def fetch_products_from_api_via_browser(
         domain_name: The domain name to fetch products for
         page_number: The page number to fetch
         browser_context: Unified browser context from create_unified_browser_context()
+        start_from_product_index: Index to start from (0-based). Products before this index will be skipped.
+                                   Useful for resuming failed crawls or processing specific product ranges.
         
     Returns:
-        List of product dicts with 'productName' and 'productLink' keys
+        List of product dicts with 'productName' and 'productLink' keys (starting from specified index)
     """
     def _log(message, level="INFO"):
         if log_callback:
@@ -398,7 +401,7 @@ async def fetch_products_from_api_via_browser(
                 return []
             
             # Extract products from response
-            for item in data:
+            for idx, item in enumerate(data):
                 name = item.get("name", "").strip()
                 source_url = item.get("source_url", "").strip()
                 
@@ -410,7 +413,18 @@ async def fetch_products_from_api_via_browser(
                 else:
                     _log(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")
             
-            _log(f"📦 Fetched {len(products)} products from page {page_number}", "INFO")
+            # Apply start_from_product_index filter
+            total_fetched = len(products)
+            if start_from_product_index > 0:
+                if start_from_product_index >= total_fetched:
+                    _log(f"⚠️ start_from_product_index ({start_from_product_index}) >= total products ({total_fetched}), returning empty list", "WARNING")
+                    return []
+                
+                skipped_count = start_from_product_index
+                products = products[start_from_product_index:]
+                _log(f"📦 Fetched {total_fetched} products from page {page_number}, skipped first {skipped_count}, returning {len(products)} products", "INFO")
+            else:
+                _log(f"📦 Fetched {len(products)} products from page {page_number}", "INFO")
             
         except Exception as e:
             _log(f"❌ Error fetching page {page_number} for {domain_name}: {str(e)}", "ERROR")

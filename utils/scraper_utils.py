@@ -1999,7 +1999,7 @@ async def download_pdf_links(
         timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
        
         async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=True), 
+            connector=aiohttp.TCPConnector(ssl=False), 
             timeout=timeout,
             headers=request_headers,
         ) as session: # try to add headers to the request 

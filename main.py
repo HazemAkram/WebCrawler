@@ -199,7 +199,7 @@ async def process_single_product(
         product_url = venue.get('productLink', '')
         product_name = venue.get('productName', 'Unknown')
         
-        # First, check if product page is accessible
+        # # First, check if product page is accessible
         # try:
         #     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=True), cookies=cookies, headers=headers) as check_session:
         #         async with check_session.head(product_url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=True) as response:

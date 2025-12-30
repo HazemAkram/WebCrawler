@@ -2020,13 +2020,14 @@ async def download_pdf_links(
 
             try:
                 to_remove = product_url.replace("https://www.dcdbaltur.com.tr", "")
+                is_remove = True
             except Exception as e:
                 log_message(f"⚠️ Error removing product URL from file URL: {str(e)}", "WARNING")
-                to_remove = False
+                is_remove = False
             
             for i, file_info in enumerate(all_files, 1):
                 file_url = file_info['url']
-                if to_remove == False:
+                if is_remove == True:
                     file_url = file_url.replace(to_remove, "/")
                 file_text = file_info['text']
                 file_type = file_info['type']

@@ -741,28 +741,37 @@ def compress_categories():
         if tar_bin and system != 'windows':
             # Use native tar for robust archiving on Linux/Unix/macOS
             try:
-                # Build the product paths and flatten to output/ProductName
-                product_paths = []
-                for category in categories:
-                    category_path = os.path.join(output_folder, category)
-                    for product_name in os.listdir(category_path):
-                        product_path = os.path.join(category_path, product_name)
-                        if os.path.isdir(product_path):
-                            rel_path = os.path.relpath(product_path)
-                            product_paths.append(rel_path)
-                # Prepare the tar arguments: flatten everything under output/
+                # Merge all files from duplicate product folders into one per product name
+                from pathlib import Path
+                import shutil as pyshutil
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    symlink_root = os.path.join(tmpdir, 'output')
-                    os.makedirs(symlink_root, exist_ok=True)
-                    for product_path in product_paths:
-                        # src = original, dst = tmpdir/output/ProductName
-                        product_name = os.path.basename(product_path)
-                        link_path = os.path.join(symlink_root, product_name)
-                        os.symlink(os.path.abspath(product_path), link_path)
+                    merge_root = os.path.join(tmpdir, 'output')
+                    os.makedirs(merge_root, exist_ok=True)
+                    for category in categories:
+                        category_path = os.path.join(output_folder, category)
+                        for product_name in os.listdir(category_path):
+                            source_prod_path = os.path.join(category_path, product_name)
+                            if not os.path.isdir(source_prod_path):
+                                continue
+                            dest_prod_path = os.path.join(merge_root, product_name)
+                            os.makedirs(dest_prod_path, exist_ok=True)
+                            # Copy all files and sub-dirs inside
+                            for root, dirs, files in os.walk(source_prod_path):
+                                rel_root = os.path.relpath(root, source_prod_path)
+                                dest_root = os.path.join(dest_prod_path, rel_root) if rel_root != '.' else dest_prod_path
+                                os.makedirs(dest_root, exist_ok=True)
+                                for file in files:
+                                    src_file = os.path.join(root, file)
+                                    dst_file = os.path.join(dest_root, file)
+                                    try:
+                                        pyshutil.copy2(src_file, dst_file)
+                                    except Exception as copy_e:
+                                        log_message(f"WARNING: Could not copy '{src_file}' to '{dst_file}': {copy_e}", level="WARNING")
                     # Run the tar command
                     tar_cmd = [tar_bin, '-czf', os.path.abspath(archive_path), '-C', tmpdir, 'output']
                     log_message(f"Tar Command : {tar_cmd}")
                     subprocess.run(tar_cmd, check=True)
+
                 tar_method = 'system_tar'
                 log_message(f"Compressed categories using system tar: {archive_name}", level="INFO")
             except Exception as e:

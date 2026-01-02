@@ -20,6 +20,9 @@ import secrets
 from pathlib import Path
 import zipfile
 import tarfile
+import platform
+import subprocess
+import shutil
 
 
 # Import the crawling functions
@@ -700,7 +703,7 @@ def delete_item():
 
 @app.route('/compress_categories', methods=['POST'])
 def compress_categories():
-    """Compress selected categories into a tar.gz archive"""
+    """Compress selected categories into a tar.gz archive (uses system tar on Linux/Unix when available)"""
     try:
         data = request.get_json()
         categories = data.get('categories', [])
@@ -729,26 +732,62 @@ def compress_categories():
         archive_name = f"{timestamp}.tar.gz"
         archive_path = os.path.join(archives_folder, archive_name)
         
-        # Build tar.gz archive with flattened structure
-        with tarfile.open(archive_path, "w:gz") as tar:
-            for category in categories:
-                category_path = os.path.join(output_folder, category)
-                if os.path.isdir(category_path):
-                    # Add each product in this category directly under output/
+        tar_method = None
+        system = platform.system().lower()
+        tar_bin = shutil.which('tar')
+        log_message(f"Tar Binary: {tar_bin}")
+        log_message(f"System: {system}")
+        
+        if tar_bin and system != 'windows':
+            # Use native tar for robust archiving on Linux/Unix/macOS
+            try:
+                # Build the product paths and flatten to output/ProductName
+                product_paths = []
+                for category in categories:
+                    category_path = os.path.join(output_folder, category)
                     for product_name in os.listdir(category_path):
                         product_path = os.path.join(category_path, product_name)
                         if os.path.isdir(product_path):
-                            # Set arcname to flatten: output/ProductName instead of output/Category/ProductName
-                            tar.add(product_path, arcname=f"output/{product_name}")
-        
-        # Return success with download URL
+                            rel_path = os.path.relpath(product_path)
+                            product_paths.append(rel_path)
+                # Prepare the tar arguments: flatten everything under output/
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    symlink_root = os.path.join(tmpdir, 'output')
+                    os.makedirs(symlink_root, exist_ok=True)
+                    for product_path in product_paths:
+                        # src = original, dst = tmpdir/output/ProductName
+                        product_name = os.path.basename(product_path)
+                        link_path = os.path.join(symlink_root, product_name)
+                        os.symlink(os.path.abspath(product_path), link_path)
+                    # Run the tar command
+                    tar_cmd = [tar_bin, '-czf', os.path.abspath(archive_path), '-C', tmpdir, 'output']
+                    log_message(f"Tar Command : {tar_cmd}")
+                    subprocess.run(tar_cmd, check=True)
+                tar_method = 'system_tar'
+                log_message(f"Compressed categories using system tar: {archive_name}", level="INFO")
+            except Exception as e:
+                log_message(f"system tar failed, falling back to Python tarfile. Error: {e}", level="WARNING")
+                tar_method = None
+        if not tar_method:
+            # Fallback: Use Python tarfile (old approach)
+            with tarfile.open(archive_path, "w:gz") as tar:
+                for category in categories:
+                    category_path = os.path.join(output_folder, category)
+                    if os.path.isdir(category_path):
+                        for product_name in os.listdir(category_path):
+                            product_path = os.path.join(category_path, product_name)
+                            if os.path.isdir(product_path):
+                                tar.add(product_path, arcname=f"output/{product_name}")
+            tar_method = 'python_tarfile'
+            log_message(f"Compressed categories using Python tarfile: {archive_name}", level="INFO")
+        # Return success with download URL and method info
         return jsonify({
             'success': True,
             'archive_url': f"/archives/{archive_name}",
             'archive_path': archive_path,
-            'categories': categories
+            'categories': categories,
+            'method': tar_method
         })
-        
     except Exception as e:
         return jsonify({'error': f'Error compressing categories: {str(e)}'}), 500
 

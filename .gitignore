@@ -6,6 +6,9 @@ __pycache__
 \scripts
 \docs
 \logs
+\archives
+*.tar.gz
+*.zip
 *.log
 *.png
 *.jpg

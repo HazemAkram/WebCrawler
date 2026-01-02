@@ -137,7 +137,7 @@ async def create_unified_browser_context(domain_url: str):
         
         try:
             # Visit the domain and wait for it to fully load
-            await page.goto(domain_url, wait_until='networkidle', timeout=30000)
+            await page.goto(domain_url, timeout=30000)
             _log(f"✅ Successfully loaded page: {domain_url}", "INFO")
             
             # Additional delay to ensure all cookies are set
@@ -2013,22 +2013,13 @@ async def download_pdf_links(
         timeout = aiohttp.ClientTimeout(total=90, connect=15, sock_read=60)
        
         async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(ssl=False), 
+            connector=aiohttp.TCPConnector(ssl=True), 
             timeout=timeout,
             headers=request_headers,
         ) as session: # try to add headers to the request 
-
-            try:
-                to_remove = product_url.replace("https://www.dcdbaltur.com.tr", "")
-                is_remove = True
-            except Exception as e:
-                log_message(f"⚠️ Error removing product URL from file URL: {str(e)}", "WARNING")
-                is_remove = False
             
             for i, file_info in enumerate(all_files, 1):
                 file_url = file_info['url']
-                if is_remove == True:
-                    file_url = file_url.replace(to_remove, "/")
                 file_text = file_info['text']
                 file_type = file_info['type']
                 file_language = normalize_language_code(file_info.get('language', 'Unknown'))

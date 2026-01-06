@@ -404,15 +404,18 @@ async def fetch_products_from_api_via_browser(
             for idx, item in enumerate(data):
                 name = item.get("name", "").strip()
                 source_url = item.get("source_url", "").strip()
+                with_pdf = item.get("with_pdf", '0')
                 
-                if name and source_url:
-                    products.append({
-                        "productName": name,
-                        "productLink": source_url,
-                    })
+                if with_pdf == '0': 
+                    if name and source_url:
+                        products.append({
+                            "productName": name,
+                            "productLink": source_url,
+                        })
+                    else:
+                        _log(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")
                 else:
-                    _log(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")
-            
+                    _log(f"⚠️ Skipping product entry with PDF: name='{name}'.", "WARNING")
             # Apply start_from_product_index filter
             total_fetched = len(products)
             if start_from_product_index > 0:

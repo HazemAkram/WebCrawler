@@ -1,6 +1,6 @@
 """
 DeepSeek AI Web Crawler
-Copyright (c) 2025 Ayaz Mensyoğlu
+Copyright (c) 2026 Ayaz Mensyoğlu
 
 This file is part of the DeepSeek AI Web Crawler project.
 Licensed under the Apache License, Version 2.0.
@@ -369,6 +369,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
 
     sites = read_sites_from_csv(input_file)
     log_message(f"Loaded {len(sites)} sites to crawl.", "INFO")
+    log_message(f"Sites: {sites}", "INFO")
     log_message(f"🔧 Configured for up to {MAX_CONCURRENT_PRODUCTS} concurrent product processing tasks", "INFO")
 
     # Update status for web interface

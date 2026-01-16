@@ -1,0 +1,18 @@
+[package]
+name = "rapidpdf"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rapidpdf"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20.0", features = ["extension-module"] }
+pdfium-render = "0.8"
+rayon = "1.7"
+image = "0.24"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rqrr = "0.6"
+printpdf = "0.6"

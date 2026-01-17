@@ -741,48 +741,35 @@ def compress_categories():
         if tar_bin and system != 'windows':
             # Use native tar for robust archiving on Linux/Unix/macOS
             try:
-                # Merge all files from duplicate product folders into one per product name
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    log_message(f"Temp Directory: {tmpdir}")
-                    merge_root = os.path.join(tmpdir, 'output')
-                    os.makedirs(merge_root, exist_ok=True)
-                    log_message(f"Merge Root: {merge_root}")
-                    for category in categories:
-                        category_path = os.path.join(output_folder, category)
-                        log_message(f"Category Path: {category_path}")
-                        for product_name in os.listdir(category_path):
-                            log_message(f"Product Name: {product_name}")
-                            source_prod_path = os.path.join(category_path, product_name)
-                            if not os.path.isdir(source_prod_path):
-                                continue
-                            log_message(f"Source Product Path: {source_prod_path}")
-                            dest_prod_path = os.path.join(merge_root, product_name)
-                            os.makedirs(dest_prod_path, exist_ok=True)
-                            log_message(f"Destination Product Path: {dest_prod_path}")
-                            # Copy all files and sub-dirs inside
-                            for root, dirs, files in os.walk(source_prod_path):
-                                log_message(f"Root: {root}")
-                                rel_root = os.path.relpath(root, source_prod_path)
-                                log_message(f"Relative Root: {rel_root}")
-                                dest_root = os.path.join(dest_prod_path, rel_root) if rel_root != '.' else dest_prod_path
-                                os.makedirs(dest_root, exist_ok=True)
-                                log_message(f"Destination Root: {dest_root}")
-                                for file in files:
-                                    log_message(f"File: {file}")
-                                    src_file = os.path.join(root, file)
-                                    dst_file = os.path.join(dest_root, file)
-                                    try:
-                                        log_message(f"Copying {src_file} to {dst_file}")
-                                        pyshutil.copy2(src_file, dst_file)
-                                    except Exception as copy_e:
-                                        log_message(f"WARNING: Could not copy '{src_file}' to '{dst_file}': {copy_e}", level="WARNING")
-                    # Run the tar command
-                    tar_cmd = [tar_bin, '-czf', os.path.abspath(archive_path), '-C', tmpdir, 'output']
-                    log_message(f"Tar Command : {tar_cmd}")
-                    subprocess.run(tar_cmd, check=True)
-                    log_message(f"Tar Command Result: {tar_cmd}")
-                tar_method = 'system_tar'
+                # Stream directly from output/ without staging/copying to a temp directory.
+                #
+                # Goal: flatten category layer so archive contains:
+                #   output/<ProductName>/...
+                #
+                # We do this by:
+                # - Running tar with -C output
+                # - Adding the selected category directories
+                # - Using path transforms:
+                #     1) strip first path segment (category): Category/Product/... -> Product/...
+                #     2) prefix "output/": Product/... -> output/Product/...
+                #
+                # Note: if multiple categories contain the same ProductName, the archive
+                # may contain duplicate paths (last one extracted may win). This matches
+                # the old fallback behavior and avoids disk/memory overhead.
+                tar_cmd = [
+                    tar_bin,
+                    "-czf",
+                    os.path.abspath(archive_path),
+                    "-C",
+                    output_folder,
+                    "--transform=s,^[^/]*/,,",
+                    "--transform=s,^,output/,",
+                    *categories,
+                ]
+                log_message(f"Tar Command : {tar_cmd}")
+                subprocess.run(tar_cmd, check=True)
                 log_message(f"Compressed categories using system tar: {archive_name}", level="INFO")
+                tar_method = 'system_tar'
             except Exception as e:
                 log_message(f"system tar failed, falling back to Python tarfile. Error: {e}", level="WARNING")
                 tar_method = None

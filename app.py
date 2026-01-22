@@ -1085,8 +1085,12 @@ def stop_systemd_service(service_name):
         return
 
     try:
-        subprocess.run([systemctl, 'stop', service_name], check=True)
-        log_message(f"Service stop requested: {service_name}", "INFO")
+        if service_name == "webcrawler.service":
+            subprocess.run([systemctl, 'restart', service_name], check=True)
+            log_message(f"Service stop requested: {service_name}", "INFO")
+        else:
+            subprocess.run([systemctl, 'stop', service_name], check=True)
+            log_message(f"Service stop requested: {service_name}", "INFO")
     except subprocess.CalledProcessError as exc:
         log_message(f"Failed to stop {service_name}: {exc}", "ERROR")
     except Exception as exc:

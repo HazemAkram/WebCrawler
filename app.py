@@ -23,6 +23,7 @@ import tarfile
 import platform
 import subprocess
 import shutil
+import time
 
 
 # Import the crawling functions
@@ -49,6 +50,9 @@ APP_PASSWORD = os.environ.get('FLASK_APP_PASSWORD')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Global variables for crawling state
+STORAGE_CHECK_INTERVAL = 60  # seconds
+storage_alarm_active = False
+storage_monitor_thread = None
 crawling_status = {
     'is_running': False,
     'current_site': 0,
@@ -701,6 +705,69 @@ def delete_item():
     except Exception as e:
         return jsonify({'error': f'Error deleting item: {str(e)}'}), 500
 
+def compress_categories_internal(categories, output_folder="output", archives_folder="archives", timestamp=None):
+    """Compress the given categories using system tar when available."""
+    if not categories:
+        raise ValueError("No categories selected")
+
+    if not os.path.exists(output_folder):
+        raise FileNotFoundError("Output folder not found")
+
+    for category in categories:
+        category_path = os.path.join(output_folder, category)
+        if not os.path.exists(category_path):
+            raise FileNotFoundError(f"Category not found: {category}")
+
+    os.makedirs(archives_folder, exist_ok=True)
+    timestamp = timestamp or datetime.now().strftime("%Y%m%d")
+    archive_name = f"{timestamp}.tar.gz"
+    archive_path = os.path.join(archives_folder, archive_name)
+
+    tar_method = None
+    system = platform.system().lower()
+    tar_bin = shutil.which('tar')
+    log_message(f"Tar Binary: {tar_bin}")
+    log_message(f"System: {system}")
+
+    if tar_bin and system != 'windows':
+        try:
+            tar_cmd = [
+                tar_bin,
+                "-czf",
+                os.path.abspath(archive_path),
+                "-C",
+                output_folder,
+                "--transform=s,^[^/]*/,,",
+                "--transform=s,^,output/,",
+                *categories,
+            ]
+            log_message(f"Tar Command : {tar_cmd}")
+            subprocess.run(tar_cmd, check=True)
+            log_message(f"Compressed categories using system tar: {archive_name}", level="INFO")
+            tar_method = 'system_tar'
+        except Exception as e:
+            log_message(f"system tar failed, falling back to Python tarfile. Error: {e}", level="WARNING")
+            tar_method = None
+
+    if not tar_method:
+        with tarfile.open(archive_path, "w:gz") as tar:
+            for category in categories:
+                category_path = os.path.join(output_folder, category)
+                if os.path.isdir(category_path):
+                    for product_name in os.listdir(category_path):
+                        product_path = os.path.join(category_path, product_name)
+                        if os.path.isdir(product_path):
+                            tar.add(product_path, arcname=f"output/{product_name}")
+        tar_method = 'python_tarfile'
+        log_message(f"Compressed categories using Python tarfile: {archive_name}", level="INFO")
+
+    return {
+        'archive_name': archive_name,
+        'archive_path': archive_path,
+        'archive_url': f"/archives/{archive_name}",
+        'method': tar_method
+    }
+
 @app.route('/compress_categories', methods=['POST'])
 def compress_categories():
     """Compress selected categories into a tar.gz archive (uses system tar on Linux/Unix when available)"""
@@ -727,71 +794,13 @@ def compress_categories():
             if not os.path.exists(category_path):
                 return jsonify({'error': f'Category not found: {category}'}), 404
         
-        # Create timestamped archive
-        timestamp = datetime.now().strftime("%Y%m%d")
-        archive_name = f"{timestamp}.tar.gz"
-        archive_path = os.path.join(archives_folder, archive_name)
-        
-        tar_method = None
-        system = platform.system().lower()
-        tar_bin = shutil.which('tar')
-        log_message(f"Tar Binary: {tar_bin}")
-        log_message(f"System: {system}")
-        
-        if tar_bin and system != 'windows':
-            # Use native tar for robust archiving on Linux/Unix/macOS
-            try:
-                # Stream directly from output/ without staging/copying to a temp directory.
-                #
-                # Goal: flatten category layer so archive contains:
-                #   output/<ProductName>/...
-                #
-                # We do this by:
-                # - Running tar with -C output
-                # - Adding the selected category directories
-                # - Using path transforms:
-                #     1) strip first path segment (category): Category/Product/... -> Product/...
-                #     2) prefix "output/": Product/... -> output/Product/...
-                #
-                # Note: if multiple categories contain the same ProductName, the archive
-                # may contain duplicate paths (last one extracted may win). This matches
-                # the old fallback behavior and avoids disk/memory overhead.
-                tar_cmd = [
-                    tar_bin,
-                    "-czf",
-                    os.path.abspath(archive_path),
-                    "-C",
-                    output_folder,
-                    "--transform=s,^[^/]*/,,",
-                    "--transform=s,^,output/,",
-                    *categories,
-                ]
-                log_message(f"Tar Command : {tar_cmd}")
-                subprocess.run(tar_cmd, check=True)
-                log_message(f"Compressed categories using system tar: {archive_name}", level="INFO")
-                tar_method = 'system_tar'
-            except Exception as e:
-                log_message(f"system tar failed, falling back to Python tarfile. Error: {e}", level="WARNING")
-                tar_method = None
-        if not tar_method:
-            # Fallback: Use Python tarfile (old approach)
-            with tarfile.open(archive_path, "w:gz") as tar:
-                for category in categories:
-                    category_path = os.path.join(output_folder, category)
-                    if os.path.isdir(category_path):
-                        for product_name in os.listdir(category_path):
-                            product_path = os.path.join(category_path, product_name)
-                            if os.path.isdir(product_path):
-                                tar.add(product_path, arcname=f"output/{product_name}")
-            tar_method = 'python_tarfile'
-            log_message(f"Compressed categories using Python tarfile: {archive_name}", level="INFO")
-        # Return success with download URL and method info
+        result = compress_categories_internal(categories)
         return jsonify({
             'success': True,
-            'archive_url': f"/archives/{archive_name}",
-            'archive_path': archive_path,
+            'archive_url': result['archive_url'],
+            'archive_path': result['archive_path'],
             'categories': categories,
-            'method': tar_method
+            'method': result['method']
         })
     except Exception as e:
         return jsonify({'error': f'Error compressing categories: {str(e)}'}), 500
@@ -885,29 +894,9 @@ def get_category_names():
 @app.route('/server-info')
 def server_info():
     """Display server information"""
-    import platform
-    import psutil
-    
     try:
-        cpu_percent = psutil.cpu_percent(interval=1)
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        
-        server_info = {
-            'python_version': platform.python_version(),
-            'platform': platform.platform(),
-            'cpu_count': psutil.cpu_count(),
-            'cpu_percent': cpu_percent,
-            'memory_total': f"{memory.total / (1024**3):.1f} GB",
-            'memory_available': f"{memory.available / (1024**3):.1f} GB",
-            'memory_percent': memory.percent,
-            'disk_total': f"{disk.total / (1024**3):.1f} GB",
-            'disk_free': f"{disk.free / (1024**3):.1f} GB",
-            'disk_percent': disk.percent,
-            'output_folder_size': get_folder_size("output")
-        }
-        
-        return jsonify(server_info)
+        server_info_data = gather_server_info_data()
+        return jsonify(server_info_data)
     except ImportError:
         return jsonify({'error': 'psutil not installed'})
     except Exception as e:
@@ -925,6 +914,56 @@ def get_folder_size(folder_path):
         return f"{total_size / (1024**3):.2f} GB"
     except:
         return "Unknown"
+
+
+def get_output_categories(output_folder="output"):
+    """Return sorted category names under the output folder."""
+    if not os.path.isdir(output_folder):
+        return []
+    return sorted([
+        item for item in os.listdir(output_folder)
+        if os.path.isdir(os.path.join(output_folder, item))
+    ])
+
+
+def parse_size_gb(value):
+    """Convert a size string like '12.34 GB' into a float (GB)."""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.split()[0])
+        except (ValueError, IndexError):
+            return 0.0
+    return 0.0
+
+
+def gather_server_info_data():
+    """Collect server stats for /server-info and internal checks."""
+    try:
+        import psutil
+    except ImportError:
+        raise
+
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+
+    return {
+        'python_version': platform.python_version(),
+        'platform': platform.platform(),
+        'cpu_count': psutil.cpu_count(),
+        'cpu_percent': cpu_percent,
+        'memory_total': f"{memory.total / (1024**3):.1f} GB",
+        'memory_available': f"{memory.available / (1024**3):.1f} GB",
+        'memory_percent': memory.percent,
+        'disk_total': f"{disk.total / (1024**3):.1f} GB",
+        'disk_free': f"{disk.free / (1024**3):.1f} GB",
+        'disk_percent': disk.percent,
+        'output_folder_size': get_folder_size("output")
+    }
 
 # ===================== Products (individual installs) =====================
 
@@ -1023,6 +1062,99 @@ def start_products():
     thread.daemon = True
     thread.start()
     return jsonify({'success': True, 'message': 'Product installation started'})
+
+
+def is_storage_at_capacity(server_info):
+    """Return True when output folder size closely matches remaining disk free space."""
+    output_size = parse_size_gb(server_info.get('output_folder_size'))
+    disk_free = parse_size_gb(server_info.get('disk_free'))
+    if output_size <= 0 or disk_free <= 0:
+        return False
+    return abs(output_size - disk_free) <= 0.01
+
+
+def stop_systemd_service(service_name):
+    """Stop a systemd service when available."""
+    if platform.system().lower() != 'linux':
+        log_message(f"Systemd unavailable on this OS; cannot stop {service_name}", "WARNING")
+        return
+
+    systemctl = shutil.which('systemctl')
+    if not systemctl:
+        log_message(f"'systemctl' not found; skipping stop for {service_name}", "WARNING")
+        return
+
+    try:
+        subprocess.run([systemctl, 'stop', service_name], check=True)
+        log_message(f"Service stop requested: {service_name}", "INFO")
+    except subprocess.CalledProcessError as exc:
+        log_message(f"Failed to stop {service_name}: {exc}", "ERROR")
+    except Exception as exc:
+        log_message(f"Error stopping {service_name}: {exc}", "ERROR")
+
+
+def handle_storage_pressure():
+    """Stop crawling jobs and archive output when disk fills up."""
+    global storage_alarm_active
+    if storage_alarm_active:
+        return
+    storage_alarm_active = True
+    log_message("Disk space pressure detected; stopping crawls and compressing output", "WARNING")
+    try:
+        stop_crawling()
+    except Exception as exc:
+        log_message(f"Failed to signal crawling stop: {exc}", "ERROR")
+
+    for service in ("webcrawler.service", "webcrawler-b.service"):
+        stop_systemd_service(service)
+
+    categories = get_output_categories()
+    if not categories:
+        log_message("No output categories recorded; skipping automatic compression", "WARNING")
+        return
+
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result = compress_categories_internal(categories, timestamp=timestamp)
+        log_message(
+            f"Auto-compressed {len(categories)} categories to {result['archive_name']} ({result['method']})",
+            "INFO"
+        )
+    except Exception as exc:
+        log_message(f"Auto compression failed: {exc}", "ERROR")
+
+
+def storage_monitor_loop():
+    """Daemon thread that polls /server-info and triggers cleanup when needed."""
+    while True:
+        try:
+            server_info_data = gather_server_info_data()
+        except ImportError:
+            log_message("psutil missing; storage monitor disabled", "WARNING")
+            return
+        except Exception as exc:
+            log_message(f"Storage monitor failed to read server info: {exc}", "WARNING")
+            server_info_data = None
+
+        if server_info_data:
+            if is_storage_at_capacity(server_info_data):
+                handle_storage_pressure()
+            else:
+                global storage_alarm_active
+                if storage_alarm_active:
+                    storage_alarm_active = False
+        time.sleep(STORAGE_CHECK_INTERVAL)
+
+
+def start_storage_monitor():
+    global storage_monitor_thread
+    if storage_monitor_thread and storage_monitor_thread.is_alive():
+        return
+    storage_monitor_thread = threading.Thread(target=storage_monitor_loop, daemon=True)
+    storage_monitor_thread.start()
+
+
+start_storage_monitor()
 
 if __name__ == '__main__':
     # SECURITY: Binding to specific IP address 65.108.122.8

@@ -551,7 +551,9 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
     """
     modified_images = []
     groq_client = get_groq_client(api_key)
+    page_count = len(images)
     
+    print(f"   Processing PDF with {page_count} pages")
     if not groq_client:
         print("⚠️ Cannot perform AI-powered text removal without Groq API key")
         print("   Returning original images unchanged")
@@ -559,6 +561,11 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
     
     for page_num, img in enumerate(images, 1):
         print(f"🤖 Processing page {page_num}...")
+
+        if page_count > 20 and page_num >= 2 and page_num <= (page_count - 3):
+            print(f"   ⏭️ Skipping page {page_num} (middle page, unlikely to have contact info)")
+            modified_images.append(Image.fromarray(img_cv))
+            continue
         
         # Convert to OpenCV format for processing
         # img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
@@ -575,7 +582,7 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
         for band_idx, (start_ratio, end_ratio) in enumerate(bands, 1):
             # Extract and enhance band
             enhanced_band = enhance_image_region(img_cv, start_ratio, end_ratio)
-            enhanced_band.save(f"enhanced_band_{band_idx}.png")
+            # enhanced_band.save(f"enhanced_band_{band_idx}.png")
                         
             # Perform OCR on band
             data_band = pytesseract.image_to_data(

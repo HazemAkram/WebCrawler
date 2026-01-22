@@ -1,4 +1,5 @@
 .env
+.cursorrules
 *.csv
 __pycache__
 \output

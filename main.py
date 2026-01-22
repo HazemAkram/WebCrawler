@@ -486,7 +486,7 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                             page_number=cur_page,
                                             cookies=cookies,
                                             headers=headers,
-                                            preserve_product_name=venue.get('productName'),  # Preserve API product name
+                                            preserve_product_name=venue.get('referenceNumber'),  # Preserve API product name
                                         )
                                         for venue in batch_venues
                                     ]

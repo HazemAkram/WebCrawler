@@ -403,6 +403,7 @@ async def fetch_products_from_api_via_browser(
             # Extract products from response
             for idx, item in enumerate(data):
                 name = item.get("name", "").strip()
+                referenceNumber = item.get("reference","")
                 source_url = item.get("source_url", "").strip()
                 with_pdf = item.get("with_pdf", '0')
                 
@@ -411,6 +412,7 @@ async def fetch_products_from_api_via_browser(
                         products.append({
                             "productName": name,
                             "productLink": source_url,
+                            "referenceNumber": referenceNumber,
                         })
                     else:
                         _log(f"⚠️ Skipping malformed product entry: name='{name}', url='{source_url}'", "WARNING")

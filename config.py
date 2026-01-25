@@ -1,6 +1,6 @@
 """
 DeepSeek AI Web Crawler
-Copyright (c) 2026 Ayaz Mensyoğlu
+Copyright (c) 2025 Ayaz Mensyoğlu
 
 This file is part of the DeepSeek AI Web Crawler project.
 Licensed under the Apache License, Version 2.0.
@@ -77,22 +77,22 @@ DEFAULT_CONFIG = {
             "Certificate",
         ],
         "per_type_limits": {
-            "Data Sheet": 1,
-            "Technical Drawing": 2,
-            "User Manual": 1,
-            "Operating manual": 1,
-            "Installation Guide": 1,
-            "Interface description": 1,
-            "User guide": 1,
-            "Application guide": 1,
-            "Supplementary instructions": 1,
-            "Design guide": 1,
-            "Order information": 1,
-            "Brochure": 1,
-            "Generic": 1,
-            "CAD": 1,
+            "Data Sheet": 2,
+            "Technical Drawing": 4,
+            "User Manual": 2,
+            "Operating manual": 2,
+            "Installation Guide": 2,
+            "Interface description": 2,
+            "User guide": 2,
+            "Application guide": 2,
+            "Supplementary instructions": 2,
+            "Design guide": 2,
+            "Order information": 2,
+            "Brochure": 2,
+            "Generic": 3,
+            "CAD": 2,
             "ZIP": 1,
-            "Catalog": 1,
+            "Catalog": 2,
             "EDZ": 1
         }
     }

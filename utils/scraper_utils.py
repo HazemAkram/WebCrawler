@@ -718,27 +718,46 @@ def get_pdf_size_limit() -> int:
     """
     return MAX_SIZE_MB
 
-def generate_product_name_js_commands(primary_selector: str) -> str:
+def generate_product_name_js_commands(primary_selector: str, click_selectors: list[str] | None = None) -> str:
     """
     Generate enhanced JavaScript commands for product name extraction.
     
     Args:
         primary_selector (str): The primary CSS selector from CSV configuration
+        click_selectors (list[str] | None): Optional selectors to click before extraction
         
     Returns:
         str: JavaScript code for product name extraction
     """
+    click_selectors = click_selectors or []
+    serialized_selectors = json.dumps(click_selectors, ensure_ascii=False)
     return f"""
 
-        try{{
-            console.log('[JS] Starting button extraction...');
-            await new Promise(r => setTimeout(r, 3000));
-            document.querySelectorAll("li[role='presentation'] > a[href='#downloads']")[0].click();
-            console.log('[JS] Button clicked');
-            await new Promise(r => setTimeout(r, 3000));
-        }} catch (error) {{
-            console.log('[JS] Error with button extraction:', error.message);
+        const clickSelectors = {serialized_selectors};
+        if (clickSelectors.length > 0) {{
+            console.log('[JS] Pre-click selectors detected:', clickSelectors);
+        }} else {{
+            console.log('[JS] No pre-click selectors provided.');
         }}
+
+        for (const cssSelector of clickSelectors) {{
+            if (!cssSelector || !cssSelector.trim()) {{
+                continue;
+            }}
+            try {{
+                const button = document.querySelector(cssSelector);
+                if (button) {{
+                    console.log('[JS] Clicking pre-download selector:', cssSelector);
+                    button.click();
+                }} else {{
+                    console.log('[JS] Pre-download selector not found:', cssSelector);
+                }}
+            }} catch (error) {{
+                console.log('[JS] Error clicking selector', cssSelector, ':', error.message);
+            }}
+            await new Promise(r => setTimeout(r, 3000));
+        }}
+
         console.log('[JS] Starting enhanced product name extraction...');
         await new Promise(r => setTimeout(r, 3000));
         
@@ -1590,6 +1609,7 @@ async def download_pdf_links(
         api_key: str = None,
         cat_name: str = "Uncategorized",
         pdf_button_selector: str = "",
+        click_selectors: list[str] | None = None,
         preserve_product_name: str = None,
         ):
     
@@ -1611,8 +1631,12 @@ async def download_pdf_links(
         api_key: API key for LLM provider
         cat_name: Category name from CSV for folder organization (defaults to "Uncategorized")
         pdf_button_selector: CSS selector for PDF download buttons
+        click_selectors: List of CSS selectors to click before extraction via JS commands
         preserve_product_name: If provided, use this name instead of extracting from HTML (for API mode)
     """
+
+
+    click_selectors = [selector.strip() for selector in (click_selectors or []) if selector and selector.strip()]
 
 
 
@@ -1752,7 +1776,9 @@ async def download_pdf_links(
         # Enhanced JavaScript product name extraction using helper function
         # The second selector will be used as primary, with comprehensive fallback selectors
         product_url = f"{product_url}"
-        js_commands = generate_product_name_js_commands(pdf_selector[-1])
+        js_commands = generate_product_name_js_commands(
+            pdf_selector[-1], click_selectors=click_selectors
+        )
         # Crawl the page with CSS selector targeting PDF links
         pdf_result = await crawler.arun(
             url=product_url,

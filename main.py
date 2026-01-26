@@ -93,6 +93,7 @@ def read_sites_from_csv(input_file):
             # Parse selectors (common to both modes)
             pdf_list = [s.strip() for s in row.get('pdf_selector', '').split('|') if s.strip()]
             pdf_button_selector = row.get('pdf_button_selector', '').strip()
+            to_click_list = [s.strip() for s in row.get('to_click', '').split('|') if s.strip()]
             
             # ---- NEW (API PAGE RANGE) ----
             page_number_raw = row.get('page_number', '').strip()
@@ -134,6 +135,7 @@ def read_sites_from_csv(input_file):
                     "cat_name": row.get("cat_name", domain_name),
                     "pdf_selector": pdf_list,
                     "pdf_button_selector": pdf_button_selector,
+                    "to_click": to_click_list,
                     "start_page": start_page,
                     "end_page": end_page,
                     "start_product_index": start_product_index,
@@ -153,6 +155,7 @@ def read_sites_from_csv(input_file):
                     "pdf_selector": pdf_list,
                     "button_selector": row.get("button_selector", ""),
                     "pdf_button_selector": pdf_button_selector,
+                    "to_click": to_click_list,
                 })
     return sites
 
@@ -279,6 +282,7 @@ async def process_single_product(
                         api_key=api_key,
                         cat_name=site["cat_name"],
                         pdf_button_selector=site.get("pdf_button_selector", ""),
+                        click_selectors=site.get("to_click", []),
                         preserve_product_name=preserve_product_name,
                     )
                     

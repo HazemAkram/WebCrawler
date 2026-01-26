@@ -66,6 +66,7 @@ DEFAULT_CONFIG = {
             "CAD",
             "ZIP",
             "Catalog",
+            "Features Catalogue"
             "EDZ"
         ],
         "disallowed_types": [
@@ -93,6 +94,7 @@ DEFAULT_CONFIG = {
             "CAD": 2,
             "ZIP": 1,
             "Catalog": 2,
+            "Features Catalogue": 2,
             "EDZ": 1
         }
     }

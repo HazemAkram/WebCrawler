@@ -562,10 +562,10 @@ def replace_text_in_scanned_pdf_ai(images, api_key: str):
     for page_num, img in enumerate(images, 1):
         print(f"🤖 Processing page {page_num}...")
 
-        if page_count > 20 and page_num >= 2 and page_num <= (page_count - 3):
-            print(f"   ⏭️ Skipping page {page_num} (middle page, unlikely to have contact info)")
-            modified_images.append(Image.fromarray(img_cv))
-            continue
+        # if page_count > 20 and page_num >= 2 and page_num <= (page_count - 3):
+        #     print(f"      Skipping page {page_num} (middle page, unlikely to have contact info)")
+        #     modified_images.append(Image.fromarray(img_cv))
+        #     continue
         
         # Convert to OpenCV format for processing
         # img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)

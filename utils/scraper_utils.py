@@ -344,7 +344,7 @@ async def fetch_products_from_api_via_browser(
     page_number: int,
     browser_context: dict,
     start_from_product_index: int = 0,
-) -> List[dict]:
+) -> tuple[List[dict], bool]:
     """
     Fetch products for a given domain and page from the API using Playwright browser context.
     This ensures the API request uses the same browser fingerprint as HTML crawling.
@@ -370,6 +370,7 @@ async def fetch_products_from_api_via_browser(
     try:
         context = browser_context['context']
         headers = browser_context['headers']
+        is_empty = True
         
         # Construct API URL
         url = f"{API_BASE_URL}?domain={domain_name}&page={page_number}"
@@ -391,14 +392,23 @@ async def fetch_products_from_api_via_browser(
             
             if response.status != 200:
                 _log(f"⚠️ API returned status {response.status} for {domain_name} page {page_number}", "WARNING")
-                return []
+                return [], True
             
             data = await response.json()
             
+            # if data:
+            #     is_empty = False
+            #     print("data is not empty")
+            # else:
+            #     print("data is empty")
+
+
             # Check if response is empty or not a list
             if not data or not isinstance(data, list):
                 _log(f"✅ API pagination complete for {domain_name} at page {page_number} (empty response)", "INFO")
-                return []
+                return [], True
+            else: 
+                is_empty = False
             
             # Extract products from response
             for idx, item in enumerate(data):
@@ -423,7 +433,7 @@ async def fetch_products_from_api_via_browser(
             if start_from_product_index > 0:
                 if start_from_product_index >= total_fetched:
                     _log(f"⚠️ start_from_product_index ({start_from_product_index}) >= total products ({total_fetched}), returning empty list", "WARNING")
-                    return []
+                    return [], True
                 
                 skipped_count = start_from_product_index
                 products = products[start_from_product_index:]
@@ -433,13 +443,13 @@ async def fetch_products_from_api_via_browser(
             
         except Exception as e:
             _log(f"❌ Error fetching page {page_number} for {domain_name}: {str(e)}", "ERROR")
-            return []
+            return [], True
     
     except Exception as e:
         _log(f"❌ Unexpected error in API fetch: {str(e)}", "ERROR")
-        return []
+        return [], True
     
-    return products
+    return products, is_empty
 
 async def fetch_products_from_api(domain_name: str, session: aiohttp.ClientSession = None) -> List[dict]:
     """

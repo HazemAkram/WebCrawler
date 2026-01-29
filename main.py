@@ -448,14 +448,14 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                                 # Only apply start_product_index on the first page
                                 current_start_index = start_product_index if cur_page == start_page else 0
                                 
-                                page_venues = await fetch_products_from_api_via_browser(
+                                page_venues, is_empty = await fetch_products_from_api_via_browser(
                                     domain_name=domain_name,
                                     page_number=cur_page,
                                     browser_context=browser_ctx,
                                     start_from_product_index=current_start_index
                                 )
                                 
-                                if not page_venues:
+                                if is_empty:
                                     log_message(f"✅ No products or end of pagination for domain '{domain_name}' at page {cur_page} from {start_page} to {end_page}", "INFO")
                                     break
                                 stats["api_products"] += len(page_venues)

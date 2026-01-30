@@ -743,6 +743,15 @@ def generate_product_name_js_commands(primary_selector: str, click_selectors: li
     serialized_selectors = json.dumps(click_selectors, ensure_ascii=False)
     return f"""
 
+
+        try {{
+            document.querySelectorAll('i.fas.fa-plus')[0].click();
+            document.querySelectorAll('i.fas.fa-plus')[0].click();
+            document.querySelectorAll('i.fas.fa-plus')[0].click();
+            await new Promise(r => setTimeout(r, 3000));
+        }} catch (error) {{
+            console.log('[JS] Error clicking language selector:', error.message);
+        }}
         const clickSelectors = {serialized_selectors};
         if (clickSelectors.length > 0) {{
             console.log('[JS] Pre-click selectors detected:', clickSelectors);
@@ -877,7 +886,12 @@ def log_message(message, level="INFO"):
     if log_callback:
         log_callback(message, level)
     else:
-        print(f"[{level}] {message}")
+        try:
+            print(f"[{level}] {message}")
+        except UnicodeEncodeError:
+            # Fallback for Windows terminals that can't handle emojis
+            ascii_message = message.encode('ascii', 'ignore').decode('ascii')
+            print(f"[{level}] {ascii_message}")
 
 
 def sanitize_folder_name(product_name: str) -> str:
@@ -896,8 +910,11 @@ def sanitize_folder_name(product_name: str) -> str:
     # Unix/Linux: / (forward slash)
     # Common problematic characters: \ / : * ? " < > |
     
+    # First, replace newlines and tabs with spaces
+    sanitized = product_name.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    
     # Replace backslashes and forward slashes with underscores
-    sanitized = product_name.replace('\\', '/').replace('/', '_') # (if you are working with windows uncomment this)
+    sanitized = sanitized.replace('\\', '/').replace('/', '_') # (if you are working with windows uncomment this)
     
     # Replace other invalid characters
     invalid_chars = r'[<>:?*|]'
@@ -1476,7 +1493,8 @@ async def download_pdfs_via_playwright(
                         'url': download.url,
                         'filename': filename,
                         'path': temp_path,
-                        'size': file_size
+                        'size': file_size,
+                        'method': 'download_event'
                     })
                     
                     log_message(f"✅ Saved: {safe_filename} ({file_size / 1024:.1f} KB)", "INFO")
@@ -1498,6 +1516,37 @@ async def download_pdfs_via_playwright(
             
             # Wait for page to settle
             await page.wait_for_timeout(2000)
+            
+            # Try to dismiss cookie consent banners and overlays
+            try:
+                log_message(f"🍪 Attempting to dismiss cookie consent banners...", "INFO")
+                # Common cookie consent selectors
+                cookie_selectors = [
+                    'button:has-text("Accept")',
+                    'button:has-text("Accept all")',
+                    'button:has-text("Agree")',
+                    'button:has-text("OK")',
+                    'button:has-text("I agree")',
+                    'button[id*="accept"]',
+                    'button[class*="accept"]',
+                    'button[class*="consent"]',
+                    '.privacy_prompt button',
+                    '#__tealiumGDPRecModal button',
+                ]
+                
+                for selector in cookie_selectors:
+                    try:
+                        elements = await page.locator(selector).all()
+                        for element in elements:
+                            if await element.is_visible():
+                                await element.click(timeout=2000)
+                                log_message(f"✅ Dismissed cookie banner with selector: {selector}", "INFO")
+                                await page.wait_for_timeout(1000)
+                                break
+                    except Exception:
+                        continue
+            except Exception as e:
+                log_message(f"⚠️ Could not dismiss cookie banner: {str(e)}", "WARNING")
             
             # Extract product name using JavaScript (or use preserved name from API)
             if preserve_product_name:
@@ -1545,33 +1594,206 @@ async def download_pdfs_via_playwright(
                     await browser.close()
                     return ([], derived_product_name, category_path, product_path)
                 
-                # Click each element and wait for downloads
+                # Track statistics for logging
+                download_event_count = 0
+                new_tab_count = 0
+                failed_count = 0
+                
+                # Click each element and wait for downloads OR new tabs
                 for i, element in enumerate(elements, 1):
+                    new_tab = None
                     try:
+                        # Check if element is visible and enabled
+                        try:
+                            is_visible = await element.is_visible()
+                            is_enabled = await element.is_enabled()
+                            
+                            if not is_visible:
+                                log_message(f"⏭️ Button {i}/{len(elements)} is not visible, skipping", "INFO")
+                                failed_count += 1
+                                continue
+                            
+                            if not is_enabled:
+                                log_message(f"⏭️ Button {i}/{len(elements)} is disabled, skipping", "INFO")
+                                failed_count += 1
+                                continue
+                        except Exception as visibility_err:
+                            log_message(f"⚠️ Could not check button {i} visibility: {str(visibility_err)}", "WARNING")
+                        
                         # Get element text for logging
-                        text = await element.inner_text()
-                        text_preview = text.strip()[:50] if text else "No text"
+                        try:
+                            text = await element.inner_text()
+                            text_preview = text.strip()[:50] if text else "No text"
+                        except:
+                            text_preview = "Unable to read text"
                         
                         log_message(f"🖱️ Clicking element {i}/{len(elements)}: {text_preview}", "INFO")
                         
-                        # Click and wait for potential download
+                        # Dual-listener approach: listen for BOTH download event AND new tab
+                        download_triggered = False
+                        new_tab_opened = False
+                        pdf_url_from_tab = None
+                        
                         try:
-                            async with page.expect_download(timeout=30000) as download_info:
-                                await element.click()
-                                # Wait a bit for download to start
-                                await page.wait_for_timeout(1000)
-                            # Download will be handled by the handler above
-                        except Exception as timeout_err:
-                            # Some clicks might not trigger downloads, that's ok
-                            log_message(f"⚠️ Element {i} click did not trigger download: {str(timeout_err)}", "INFO")
+                            # Create tasks for both events
+                            async def wait_for_new_page():
+                                """Wait for a new page/tab to open"""
+                                try:
+                                    new_page = await context.wait_for_event('page', timeout=15000)
+                                    return ('new_tab', new_page)
+                                except Exception:
+                                    return ('new_tab', None)
+                            
+                            async def wait_for_download():
+                                """Wait for a download event"""
+                                try:
+                                    async with page.expect_download(timeout=15000) as download_info:
+                                        return ('download', await download_info.value)
+                                except Exception:
+                                    return ('download', None)
+                            
+                            # Start both listeners
+                            new_page_task = asyncio.create_task(wait_for_new_page())
+                            download_task = asyncio.create_task(wait_for_download())
+                            
+                            # Click the button
+                            await element.click()
+                            
+                            # Wait a bit for events to fire
+                            await page.wait_for_timeout(1500)
+                            
+                            # Check which events completed
+                            done, pending = await asyncio.wait(
+                                [new_page_task, download_task],
+                                timeout=16.0,
+                                return_when=asyncio.ALL_COMPLETED
+                            )
+                            
+                            # Process completed tasks
+                            for task in done:
+                                try:
+                                    event_type, result = await task
+                                    
+                                    if event_type == 'new_tab' and result:
+                                        new_tab = result
+                                        new_tab_opened = True
+                                        # Wait for the new tab to load
+                                        try:
+                                            await new_tab.wait_for_load_state('load', timeout=10000)
+                                            pdf_url_from_tab = new_tab.url
+                                            log_message(f"📑 Button {i} opened new tab with URL: {pdf_url_from_tab}", "INFO")
+                                        except Exception as load_err:
+                                            log_message(f"⚠️ New tab load timeout: {str(load_err)}", "WARNING")
+                                            pdf_url_from_tab = new_tab.url if new_tab else None
+                                    
+                                    elif event_type == 'download' and result:
+                                        download_triggered = True
+                                        log_message(f"📥 Button {i} triggered download event", "INFO")
+                                        # Download will be handled by the registered handler
+                                
+                                except Exception as task_err:
+                                    log_message(f"⚠️ Error processing task result: {str(task_err)}", "WARNING")
+                            
+                            # Cancel any pending tasks
+                            for task in pending:
+                                task.cancel()
+                            
+                            # Handle the new tab scenario - download PDF from URL
+                            # Only process if no download was triggered (prefer download event over new tab)
+                            if new_tab_opened and pdf_url_from_tab and not download_triggered:
+                                # Validate URL before attempting download
+                                if pdf_url_from_tab and len(pdf_url_from_tab) > 5 and ('http://' in pdf_url_from_tab or 'https://' in pdf_url_from_tab):
+                                    new_tab_count += 1
+                                    try:
+                                        # Close the tab immediately to free resources
+                                        await new_tab.close()
+                                        
+                                        # Download the PDF manually using Playwright's request API
+                                        log_message(f"⬇️ Downloading PDF from new tab URL: {pdf_url_from_tab}", "INFO")
+                                        
+                                        response = await context.request.get(pdf_url_from_tab, timeout=60000)
+                                        
+                                        if response.ok:
+                                            content = await response.body()
+                                            
+                                            # Determine filename from URL or Content-Disposition header
+                                            filename = None
+                                            content_disposition = response.headers.get('content-disposition', '')
+                                            if content_disposition and 'filename=' in content_disposition:
+                                                import re
+                                                match = re.search(r'filename[*]?=["\']?([^"\';\r\n]+)', content_disposition)
+                                                if match:
+                                                    filename = match.group(1)
+                                            
+                                            if not filename:
+                                                # Extract from URL
+                                                from urllib.parse import urlparse, unquote
+                                                parsed = urlparse(pdf_url_from_tab)
+                                                filename = unquote(os.path.basename(parsed.path))
+                                                if not filename or '.' not in filename:
+                                                    filename = f"document_{i}.pdf"
+                                            
+                                            # Sanitize filename
+                                            safe_filename = sanitize_filename(filename)
+                                            temp_path = os.path.join(output_folder, safe_filename)
+                                            os.makedirs(output_folder, exist_ok=True)
+                                            
+                                            # Write file
+                                            with open(temp_path, 'wb') as f:
+                                                f.write(content)
+                                            
+                                            file_size = len(content)
+                                            downloads_info.append({
+                                                'url': pdf_url_from_tab,
+                                                'filename': filename,
+                                                'path': temp_path,
+                                                'size': file_size,
+                                                'method': 'new_tab'
+                                            })
+                                            
+                                            log_message(f"✅ Downloaded from new tab: {safe_filename} ({file_size / 1024:.1f} KB)", "SUCCESS")
+                                        else:
+                                            log_message(f"❌ Failed to download from new tab URL: HTTP {response.status}", "ERROR")
+                                            failed_count += 1
+                                    
+                                    except Exception as tab_err:
+                                        log_message(f"❌ Error handling new tab download: {str(tab_err)}", "ERROR")
+                                        failed_count += 1
+                                else:
+                                    log_message(f"⚠️ New tab URL is invalid or not HTTP(S), ignoring: {pdf_url_from_tab}", "WARNING")
+                            
+                            if download_triggered:
+                                download_event_count += 1
+                                log_message(f"✅ Button {i} successfully triggered download event", "INFO")
+                            
+                            else:
+                                # Neither download nor new tab
+                                log_message(f"⚠️ Button {i} did not trigger download or open new tab", "WARNING")
+                                failed_count += 1
+                        
+                        except Exception as click_err:
+                            log_message(f"⚠️ Error during button {i} click handling: {str(click_err)}", "WARNING")
+                            failed_count += 1
                             continue
                         
                     except Exception as e:
                         log_message(f"⚠️ Error processing element {i}: {str(e)}", "WARNING")
+                        failed_count += 1
                         continue
+                    
+                    finally:
+                        # Ensure new tab is closed even if error occurred
+                        if new_tab:
+                            try:
+                                await new_tab.close()
+                            except:
+                                pass
                 
                 # Wait for all downloads to complete
                 await page.wait_for_timeout(2000)
+                
+                # Log statistics
+                log_message(f"📊 Button click summary: {download_event_count} download events, {new_tab_count} new tabs, {failed_count} failed", "INFO")
                 
             except Exception as e:
                 log_message(f"❌ Error finding/clicking elements: {str(e)}", "ERROR")
@@ -1647,8 +1869,6 @@ async def download_pdf_links(
 
 
     click_selectors = [selector.strip() for selector in (click_selectors or []) if selector and selector.strip()]
-
-
 
 
     # Global dictionary to track downloaded files with their file paths across all products

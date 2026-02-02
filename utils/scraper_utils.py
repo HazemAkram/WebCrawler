@@ -1451,6 +1451,8 @@ async def download_pdfs_via_playwright(
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
+                # Headless is more reliable for automation, and also enables Chromium PDF generation
+                # (used to bypass native "Save As" dialogs triggered by print-preview flows).
                 headless=True,
                 args=[
                     '--no-sandbox',
@@ -1466,6 +1468,28 @@ async def download_pdfs_via_playwright(
                 viewport={'width': 1920, 'height': 1080},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
+
+            # Some sites "download" via window.print() which opens browser print preview + a native save dialog.
+            # We can't automate native dialogs, so we intercept window.print() and generate a PDF via Playwright.
+            try:
+                await context.add_init_script("""
+                    (() => {
+                        try {
+                            window.__crawlerPrintCalled = false;
+                            const originalPrint = window.print;
+                            window.print = () => {
+                                window.__crawlerPrintCalled = true;
+                                // do NOT open print preview
+                            };
+                            window.__crawlerOriginalPrint = originalPrint;
+                        } catch (e) {
+                            // ignore
+                        }
+                    })();
+                """)
+            except Exception:
+                # If init script injection fails, the rest of the pipeline still works for normal downloads.
+                pass
             
             page = await context.new_page()
             
@@ -1532,6 +1556,7 @@ async def download_pdfs_via_playwright(
                     'button[class*="consent"]',
                     '.privacy_prompt button',
                     '#__tealiumGDPRecModal button',
+                    'a:has-text("Accept all cookies")',
                 ]
                 
                 for selector in cookie_selectors:
@@ -1760,16 +1785,88 @@ async def download_pdfs_via_playwright(
                                         log_message(f"❌ Error handling new tab download: {str(tab_err)}", "ERROR")
                                         failed_count += 1
                                 else:
-                                    log_message(f"⚠️ New tab URL is invalid or not HTTP(S), ignoring: {pdf_url_from_tab}", "WARNING")
+                                    # Print-preview / internal pages (e.g. chrome://print) can't be fetched via request.get().
+                                    # As a fallback, render the page to a PDF using Chromium's PDF generator.
+                                    try:
+                                        new_tab_count += 1
+                                        try:
+                                            await new_tab.wait_for_load_state('domcontentloaded', timeout=8000)
+                                        except Exception:
+                                            pass
+
+                                        base_name = derived_product_name if derived_product_name and derived_product_name != "Unknown Product" else f"document_{i}"
+                                        safe_pdf_name = sanitize_filename(f"{base_name}.pdf")
+                                        temp_path = os.path.join(output_folder, safe_pdf_name)
+                                        os.makedirs(output_folder, exist_ok=True)
+
+                                        log_message(f"🖨️ Detected non-HTTP(S) tab ({pdf_url_from_tab}); saving via page.pdf(): {safe_pdf_name}", "INFO")
+                                        try:
+                                            await new_tab.wait_for_load_state('networkidle', timeout=8000)
+                                        except Exception:
+                                            pass
+                                        await new_tab.pdf(
+                                            path=temp_path,
+                                            print_background=True,
+                                            prefer_css_page_size=True,
+                                        )
+
+                                        file_size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                                        downloads_info.append({
+                                            'url': pdf_url_from_tab or '',
+                                            'filename': safe_pdf_name,
+                                            'path': temp_path,
+                                            'size': file_size,
+                                            'method': 'print_to_pdf_tab'
+                                        })
+                                        log_message(f"✅ Saved via page.pdf(): {safe_pdf_name} ({file_size / 1024:.1f} KB)", "SUCCESS")
+                                    except Exception as pdf_err:
+                                        log_message(f"⚠️ New tab URL is invalid and PDF rendering failed: {str(pdf_err)} (url={pdf_url_from_tab})", "WARNING")
+                                        failed_count += 1
                             
                             if download_triggered:
                                 download_event_count += 1
                                 log_message(f"✅ Button {i} successfully triggered download event", "INFO")
                             
                             else:
-                                # Neither download nor new tab
-                                log_message(f"⚠️ Button {i} did not trigger download or open new tab", "WARNING")
-                                failed_count += 1
+                                # Neither download nor new tab: maybe the site called window.print().
+                                try:
+                                    print_called = await page.evaluate("() => Boolean(window.__crawlerPrintCalled)")
+                                except Exception:
+                                    print_called = False
+
+                                if print_called:
+                                    try:
+                                        base_name = derived_product_name if derived_product_name and derived_product_name != "Unknown Product" else f"document_{i}"
+                                        safe_pdf_name = sanitize_filename(f"{base_name}.pdf")
+                                        temp_path = os.path.join(output_folder, safe_pdf_name)
+                                        os.makedirs(output_folder, exist_ok=True)
+
+                                        log_message(f"🖨️ Detected window.print() call; saving current page via page.pdf(): {safe_pdf_name}", "INFO")
+                                        try:
+                                            await page.wait_for_load_state('networkidle', timeout=8000)
+                                        except Exception:
+                                            pass
+                                        await page.pdf(
+                                            path=temp_path,
+                                            print_background=True,
+                                            prefer_css_page_size=True,
+                                        )
+
+                                        file_size = os.path.getsize(temp_path) if os.path.exists(temp_path) else 0
+                                        downloads_info.append({
+                                            'url': page.url,
+                                            'filename': safe_pdf_name,
+                                            'path': temp_path,
+                                            'size': file_size,
+                                            'method': 'print_to_pdf_page'
+                                        })
+                                        log_message(f"✅ Saved via page.pdf(): {safe_pdf_name} ({file_size / 1024:.1f} KB)", "SUCCESS")
+                                    except Exception as pdf_err:
+                                        log_message(f"⚠️ window.print() detected but PDF rendering failed: {str(pdf_err)}", "WARNING")
+                                        failed_count += 1
+                                else:
+                                    log_message(f"⚠️ Button {i} did not trigger download, open new tab, or call window.print()", "WARNING")
+                                    failed_count += 1
                         
                         except Exception as click_err:
                             log_message(f"⚠️ Error during button {i} click handling: {str(click_err)}", "WARNING")

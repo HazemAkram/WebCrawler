@@ -905,28 +905,41 @@ def sanitize_folder_name(product_name: str) -> str:
     Returns:
         str: Sanitized folder name safe for filesystem use
     """
-    # Remove or replace invalid characters for folder names
-    # Windows: < > : " | ? * \ /
-    # Unix/Linux: / (forward slash)
-    # Common problematic characters: \ / : * ? " < > |
+    # Remove or replace invalid characters for folder names.
+    # Windows invalid: < > : " | ? * \ /
+    # Unix/Linux invalid: /
+    #
+    # Project convention (traceable): replace each special char with a distinct token.
+    # Example: "\" -> "_#1_", "/" -> "_#2_", "<" -> "_#3_", etc.
+    # This avoids different illegal chars collapsing into the same "_" and helps debugging.
     
     # First, replace newlines and tabs with spaces
     sanitized = product_name.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
     
-    # Replace backslashes and forward slashes with underscores
-    sanitized = sanitized.replace('\\', '/').replace('/', '_') # (if you are working with windows uncomment this)
-    
-    # Replace other invalid characters
-    invalid_chars = r'[<>:?*|]'
-    sanitized = re.sub(invalid_chars, '_', sanitized)
-    invalid_chars = r'["]'
-    sanitized = re.sub(invalid_chars, '', sanitized)
+    # Replace special characters with deterministic tokens
+    special_map = {
+        "\\": "_#1_",
+        "/": "_#2_",
+        "<": "_#3_",
+        ">": "_#4_",
+        ":": "_#5_",
+        "\"": "_#6_",
+        "|": "_#7_",
+        "?": "_#8_",
+        "*": "_#9_",
+    }
+    for ch, repl in special_map.items():
+        if ch in sanitized:
+            sanitized = sanitized.replace(ch, repl)
+
+    # Replace remaining ASCII control chars (safety; Windows disallows these in names)
+    sanitized = re.sub(r'[\x00-\x1f]', ' ', sanitized)
     
     # Remove leading/trailing spaces and dots
     sanitized = sanitized.strip(' .')
     
-    # Replace multiple consecutive underscores with single underscore
-    sanitized = re.sub(r'_+', '_', sanitized)
+    # Normalize whitespace (but do NOT collapse underscores; tokens like "_#1_" rely on them)
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
     
     # Limit length to prevent filesystem issues (max 255 characters)
     if len(sanitized) > 255:
@@ -1983,6 +1996,7 @@ async def download_pdf_links(
                 log_message(f"❌ Playwright required but not installed. Run: pip install playwright", "ERROR")
                 return {"productLink": product_url, "productName": None, "category": cat_name, "saved_count": 0, "has_datasheet": False}
             
+            product_url = product_url.replace("?tab=detail", "?tab=downloads")
             # Execute Playwright download
             playwright_files, derived_product_name, category_path, product_path = await download_pdfs_via_playwright(
                 product_url=product_url,
@@ -2182,10 +2196,10 @@ async def download_pdf_links(
         category_path = os.path.join(output_folder, sanitized_cat_name)
         os.makedirs(category_path, exist_ok=True)
         
-        productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
-        if not os.path.exists(productPath):
-            os.makedirs(productPath)
-            log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
+        # productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
+        # if not os.path.exists(productPath):
+        #     os.makedirs(productPath)
+        #     log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
 
         # Step 3: Split extracted files into PDFs and other file types
         # and apply per-type limits with strong language preference (EN first).
@@ -2314,6 +2328,15 @@ async def download_pdf_links(
             log_message(f"📭 No files found on page for product: {derived_product_name}", "INFO")
             log_message(f"🔗 Product URL: {product_url}", "INFO")
             return {"productLink": product_url, "productName": derived_product_name, "category": cat_name, "saved_count": 0, "has_datasheet": False}
+        else:
+            # create a folder structure for the product
+            sanitized_cat_name = sanitize_folder_name(cat_name)
+            category_path = os.path.join(output_folder, sanitized_cat_name)
+            os.makedirs(category_path, exist_ok=True)
+            productPath = os.path.join(category_path, sanitize_folder_name(derived_product_name))
+            if not os.path.exists(productPath):
+                os.makedirs(productPath)
+                log_message(f"📁 Created folder structure: {sanitized_cat_name}/{sanitize_folder_name(derived_product_name)}", "INFO")
 
         log_message(f"📄 Found {len(pdf_docs)} PDF(s) and {len(other_docs)} other file(s) for product: {derived_product_name}", "INFO")
 

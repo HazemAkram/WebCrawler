@@ -80,7 +80,7 @@ DEFAULT_CONFIG = {
         "per_type_limits": {
             "Data Sheet": 1,
             "Technical Drawing": 1,
-            "User Manual": 1,
+            "User Manual": 0,
             "Operating manual": 1,
             "Installation Guide": 1,
             "Interface description": 1,
@@ -93,7 +93,7 @@ DEFAULT_CONFIG = {
             "Generic": 1,
             "CAD": 1,
             "ZIP": 1,
-            "Catalog": 1,
+            "Catalog": 0,
             "Features Catalogue": 1,
             "EDZ": 1
         }

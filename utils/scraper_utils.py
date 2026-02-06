@@ -728,7 +728,11 @@ def get_pdf_size_limit() -> int:
     """
     return MAX_SIZE_MB
 
-def generate_product_name_js_commands(primary_selector: str, click_selectors: list[str] | None = None) -> str:
+def generate_product_name_js_commands(
+    primary_selector: str,
+    click_selectors: list[str] | None = None,
+    shadow_collect_selectors: list[str] | None = None,
+) -> str:
     """
     Generate enhanced JavaScript commands for product name extraction.
     
@@ -740,18 +744,242 @@ def generate_product_name_js_commands(primary_selector: str, click_selectors: li
         str: JavaScript code for product name extraction
     """
     click_selectors = click_selectors or []
+    shadow_collect_selectors = [s for s in (shadow_collect_selectors or []) if isinstance(s, str) and s.strip()]
     serialized_selectors = json.dumps(click_selectors, ensure_ascii=False)
+    serialized_shadow_selectors = json.dumps(shadow_collect_selectors, ensure_ascii=False)
     return f"""
 
 
+        // --- Shadow DOM helper (best-effort) ---
+        // Many modern sites (e.g. Schneider Electric) render document lists inside open shadow roots.
+        // document.querySelectorAll(...) does NOT pierce shadow boundaries, so we collect matching nodes
+        // from open shadow roots and clone them into a hidden light-DOM container.
         try {{
-            document.querySelectorAll('i.fas.fa-plus')[0].click();
-            document.querySelectorAll('i.fas.fa-plus')[0].click();
-            document.querySelectorAll('i.fas.fa-plus')[0].click();
+
             await new Promise(r => setTimeout(r, 3000));
+            const __crawlerShadowSelectors = {serialized_shadow_selectors};
+            const __crawlerShadowContainerId = "__crawler_shadow_container";
+            const __crawlerMaxElementsVisited = 25000;
+            const __crawlerMaxShadowHosts = 500;
+            const __crawlerMaxClonedMatches = 4000;
+
+            // Deep query helpers that traverse open shadow roots (for clicking + product name extraction).
+            // NOTE: these can "see" into open shadow roots, but Crawl4AI target_elements selection may not,
+            // hence we still clone matches into a light-DOM container for extraction.
+            function __crawlerDeepQueryAll(selector) {{
+                const results = [];
+                if (!selector || !selector.trim()) return results;
+                let elementsVisited = 0;
+                let hostsVisited = 0;
+                const queue = [];
+                if (document.documentElement) queue.push(document.documentElement);
+                while (queue.length) {{
+                    const el = queue.shift();
+                    if (!el || el.nodeType !== 1) continue;
+                    elementsVisited++;
+                    if (elementsVisited > __crawlerMaxElementsVisited) break;
+                    // Search within this root if it supports querySelectorAll
+                    try {{
+                        if (el.querySelectorAll) {{
+                            const found = el.querySelectorAll(selector);
+                            if (found && found.length) {{
+                                for (let i = 0; i < found.length; i++) results.push(found[i]);
+                            }}
+                        }}
+                    }} catch (e) {{
+                        // ignore invalid selectors / query errors
+                    }}
+                    // Traverse light DOM children
+                    if (el.children && el.children.length) {{
+                        for (let i = 0; i < el.children.length; i++) queue.push(el.children[i]);
+                    }}
+                    // Traverse open shadow root
+                    const sr = el.shadowRoot;
+                    if (sr) {{
+                        hostsVisited++;
+                        if (hostsVisited > __crawlerMaxShadowHosts) break;
+                        try {{
+                            const walker = document.createTreeWalker(sr, NodeFilter.SHOW_ELEMENT);
+                            let node = walker.nextNode();
+                            let shadowVisited = 0;
+                            while (node) {{
+                                queue.push(node);
+                                shadowVisited++;
+                                if (shadowVisited > 5000) break;
+                                node = walker.nextNode();
+                            }}
+                        }} catch (e) {{
+                            // ignore traversal failures
+                        }}
+                        // Also query directly inside shadow root
+                        try {{
+                            const foundInShadow = sr.querySelectorAll(selector);
+                            if (foundInShadow && foundInShadow.length) {{
+                                for (let i = 0; i < foundInShadow.length; i++) results.push(foundInShadow[i]);
+                            }}
+                        }} catch (e) {{
+                            // ignore
+                        }}
+                    }}
+                    if (results.length >= 2000) break; // cap to avoid runaway
+                }}
+                return results;
+            }}
+
+            function __crawlerDeepQueryFirst(selector) {{
+                const all = __crawlerDeepQueryAll(selector);
+                return all && all.length ? all[0] : null;
+            }}
+
+            function __crawlerEnsureShadowContainer() {{
+                let c = document.getElementById(__crawlerShadowContainerId);
+                if (!c) {{
+                    c = document.createElement("div");
+                    c.id = __crawlerShadowContainerId;
+                    c.setAttribute("data-crawler", "shadow-container");
+                    c.style.cssText = "display:none !important; visibility:hidden !important;";
+                    (document.body || document.documentElement).appendChild(c);
+                }}
+                // Clear any previous run
+                c.innerHTML = "";
+                return c;
+            }}
+
+            function __crawlerCollectFromOpenShadowRoots() {{
+                if (!__crawlerShadowSelectors || __crawlerShadowSelectors.length === 0) {{
+                    return {{ hostsVisited: 0, matchesCloned: 0, elementsVisited: 0 }};
+                }}
+
+                const container = __crawlerEnsureShadowContainer();
+                let elementsVisited = 0;
+                let hostsVisited = 0;
+                let matchesCloned = 0;
+
+                // BFS across both light DOM and discovered shadow DOM trees
+                const queue = [];
+                if (document.documentElement) queue.push(document.documentElement);
+
+                while (queue.length > 0) {{
+                    const el = queue.shift();
+                    if (!el || el.nodeType !== 1) continue;
+
+                    elementsVisited++;
+                    if (elementsVisited > __crawlerMaxElementsVisited) break;
+
+                    // Traverse regular DOM children
+                    if (el.children && el.children.length) {{
+                        for (let i = 0; i < el.children.length; i++) {{
+                            queue.push(el.children[i]);
+                        }}
+                    }}
+
+                    // Traverse open shadow root (if present)
+                    const sr = el.shadowRoot;
+                    if (sr) {{
+                        hostsVisited++;
+                        if (hostsVisited > __crawlerMaxShadowHosts) break;
+
+                        // Enqueue shadow DOM elements for nested shadow roots discovery
+                        try {{
+                            const walker = document.createTreeWalker(sr, NodeFilter.SHOW_ELEMENT);
+                            let node = walker.nextNode();
+                            let shadowVisited = 0;
+                            while (node) {{
+                                queue.push(node);
+                                shadowVisited++;
+                                if (shadowVisited > 5000) break; // cap per shadow root
+                                node = walker.nextNode();
+                            }}
+                        }} catch (e) {{
+                            // ignore traversal failures
+                        }}
+
+                        // Clone matches into light DOM so other extraction steps can see them
+                        for (const sel of __crawlerShadowSelectors) {{
+                            if (!sel || !sel.trim()) continue;
+                            let matches = [];
+                            try {{
+                                matches = sr.querySelectorAll(sel);
+                            }} catch (e) {{
+                                continue;
+                            }}
+                            if (!matches || matches.length === 0) continue;
+
+                            for (let i = 0; i < matches.length; i++) {{
+                                if (matchesCloned >= __crawlerMaxClonedMatches) break;
+                                const m = matches[i];
+                                try {{
+                                    const wrap = document.createElement("div");
+                                    wrap.setAttribute("data-crawler-shadow-host", (el.tagName || "").toLowerCase());
+                                    if (el.id) wrap.setAttribute("data-crawler-shadow-host-id", el.id);
+                                    wrap.setAttribute("data-crawler-shadow-selector", sel);
+                                    wrap.appendChild(m.cloneNode(true));
+                                    container.appendChild(wrap);
+                                    matchesCloned++;
+                                }} catch (e) {{
+                                    // ignore clone failures
+                                }}
+                            }}
+                            if (matchesCloned >= __crawlerMaxClonedMatches) break;
+                        }}
+                    }}
+
+                    if (matchesCloned >= __crawlerMaxClonedMatches) break;
+                }}
+
+                return {{ hostsVisited, matchesCloned, elementsVisited }};
+            }}
+
+            const __crawlerShadowStats = __crawlerCollectFromOpenShadowRoots();
+            console.log("[JS] Shadow DOM collection:", JSON.stringify(__crawlerShadowStats));
+        }} catch (error) {{
+            console.log("[JS] Shadow DOM collection error:", error && error.message ? error.message : String(error));
+        }}
+
+        // ------------------------------------------------------------ mitsubishi electric --------------------------------------------------------
+        
+        try {{
+                function findDownloadsElement(selectors) {{
+                for (const selector of selectors) {{
+                const elements = document.querySelectorAll(selector);
+            
+                for (const el of elements) {{
+                    if (el.textContent.trim() === "DOWNLOADS") {{
+                    return el; // Found the element
+                    }}
+                }}
+                }}
+            
+                return null; // Not found
+            }}
+            
+            // Example usage:
+            await new Promise(r => setTimeout(r, 3000));
+            const selectors = ["button.Nav_link__yt4y8.Tabs_navLink__SEkZx.Tabs_root--navLink__6yUNs"];
+            const downloadsElement = findDownloadsElement(selectors);
+            
+            if (downloadsElement) {{
+                console.log("Found:", downloadsElement);
+                downloadsElement.click();
+                await new Promise(r => setTimeout(r, 1000));
+                document.querySelectorAll('span.Collapsible_icon__EIKfk.icon-plus')[0].click();
+                await new Promise(r => setTimeout(r, 1000));
+                document.querySelectorAll('span.Collapsible_icon__EIKfk.icon-plus')[0].click();
+                await new Promise(r => setTimeout(r, 1000));
+                document.querySelectorAll('span.Collapsible_icon__EIKfk.icon-plus')[0].click();
+                await new Promise(r => setTimeout(r, 1000));
+                document.querySelectorAll('span.Collapsible_icon__EIKfk.icon-plus')[0].click();
+                await new Promise(r => setTimeout(r, 1000));
+            }} else {{
+                console.log("Element with text 'Downloads' not found.");
+            }}
+  
         }} catch (error) {{
             console.log('[JS] Error clicking language selector:', error.message);
         }}
+
+        // ------------------------------------------------------------ mitsubishi electric --------------------------------------------------------
+
         const clickSelectors = {serialized_selectors};
         if (clickSelectors.length > 0) {{
             console.log('[JS] Pre-click selectors detected:', clickSelectors);
@@ -764,7 +992,7 @@ def generate_product_name_js_commands(primary_selector: str, click_selectors: li
                 continue;
             }}
             try {{
-                const button = document.querySelector(cssSelector);
+                const button = __crawlerDeepQueryFirst(cssSelector) || document.querySelector(cssSelector);
                 if (button) {{
                     console.log('[JS] Clicking pre-download selector:', cssSelector);
                     button.click();
@@ -836,7 +1064,7 @@ def generate_product_name_js_commands(primary_selector: str, click_selectors: li
                 var selector = allSelectors[i];
                 console.log('[JS] Trying selector:', selector);
                 
-                var element = document.querySelector(selector);
+                var element = __crawlerDeepQueryFirst(selector) || document.querySelector(selector);
                 if (element) {{
                     var text = element.innerText || element.textContent || "";
                     text = text.trim();
@@ -1422,6 +1650,7 @@ async def get_browser_cookies(crawler: AsyncWebCrawler) -> dict[str, str]:
 async def download_pdfs_via_playwright(
     product_url: str,
     pdf_button_selector: str,
+    click_selectors: list[str],
     output_folder: str,
     api_key: str,
     cat_name: str = "Uncategorized",
@@ -1583,6 +1812,108 @@ async def download_pdfs_via_playwright(
                         continue
             except Exception as e:
                 log_message(f"⚠️ Could not dismiss cookie banner: {str(e)}", "WARNING")
+
+            # Optional pre-clicks (passed from CSV) to reveal downloads or switch tabs before scraping download buttons.
+            # We intentionally do this AFTER cookie dismissal and BEFORE product name extraction / download element lookup.
+            normalized_click_selectors = [s.strip() for s in (click_selectors or []) if isinstance(s, str) and s.strip()]
+            if normalized_click_selectors:
+                log_message(f"🖱️ Running {len(normalized_click_selectors)} pre-click selector(s) before download discovery", "INFO")
+                known_pages = set(context.pages)
+                for sel_idx, sel in enumerate(normalized_click_selectors, 1):
+                    try:
+                        locator = page.locator(sel)
+                        count = await locator.count()
+                        if count <= 0:
+                            log_message(f"⏭️ Pre-click selector not found ({sel_idx}/{len(normalized_click_selectors)}): {sel}", "INFO")
+                            await page.wait_for_timeout(800)
+                            continue
+
+                        clicked = False
+                        # If selector matches multiple elements, only click the one whose innerText is "FILES".
+                        # This avoids accidentally clicking unrelated tab buttons with the same selector.
+                        if count > 1:
+                            target_idx = None
+                            for i in range(min(count, 25)):
+                                el = locator.nth(i)
+                                try:
+                                    if not await el.is_visible():
+                                        continue
+                                    txt = await el.inner_text()
+                                    if (txt or "").strip().lower() == "files":
+                                        target_idx = i
+                                        break
+                                except Exception:
+                                    continue
+
+                            if target_idx is None:
+                                log_message(
+                                    f"⏭️ Pre-click selector matched {count} elements but none had innerText='FILES' ({sel_idx}/{len(normalized_click_selectors)}): {sel}",
+                                    "INFO",
+                                )
+                                await page.wait_for_timeout(800)
+                                continue
+
+                            try:
+                                el = locator.nth(target_idx)
+                                await el.scroll_into_view_if_needed(timeout=3000)
+                                await el.click(timeout=8000)
+                                clicked = True
+                                log_message(
+                                    f"✅ Pre-clicked ({sel_idx}/{len(normalized_click_selectors)}) by text='FILES': {sel}",
+                                    "INFO",
+                                )
+                            except Exception as e:
+                                log_message(
+                                    f"⚠️ Pre-click failed on element with innerText='FILES' ({sel_idx}/{len(normalized_click_selectors)}): {sel} ({e})",
+                                    "WARNING",
+                                )
+                                await page.wait_for_timeout(800)
+                                continue
+                        else:
+                            # Single match: click if visible.
+                            el = locator.first
+                            try:
+                                if await el.is_visible():
+                                    await el.scroll_into_view_if_needed(timeout=3000)
+                                    await el.click(timeout=8000)
+                                    clicked = True
+                                    log_message(f"✅ Pre-clicked ({sel_idx}/{len(normalized_click_selectors)}): {sel}", "INFO")
+                                else:
+                                    log_message(f"⏭️ Pre-click element not visible ({sel_idx}/{len(normalized_click_selectors)}): {sel}", "INFO")
+                                    await page.wait_for_timeout(800)
+                            except Exception:
+                                pass
+
+                        if not clicked:
+                            # Last resort: force click first match (can help for offscreen overlays / custom controls).
+                            try:
+                                await locator.first.click(timeout=8000, force=True)
+                                clicked = True
+                                log_message(f"✅ Pre-clicked (forced) ({sel_idx}/{len(normalized_click_selectors)}): {sel}", "INFO")
+                            except Exception as force_err:
+                                log_message(f"⚠️ Pre-click failed ({sel_idx}/{len(normalized_click_selectors)}): {sel} ({force_err})", "WARNING")
+
+                        # If the click opened a new tab, close it (we don't want to hijack the main flow here).
+                        await page.wait_for_timeout(1500)
+                        try:
+                            for p2 in list(context.pages):
+                                if p2 is page:
+                                    continue
+                                if p2 not in known_pages:
+                                    try:
+                                        log_message(f"🧹 Closing unexpected tab opened during pre-click: {p2.url}", "INFO")
+                                    except Exception:
+                                        log_message("🧹 Closing unexpected tab opened during pre-click", "INFO")
+                                    try:
+                                        await p2.close()
+                                    except Exception:
+                                        pass
+                            known_pages = set(context.pages)
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        log_message(f"⚠️ Error during pre-click ({sel_idx}/{len(normalized_click_selectors)}): {sel} ({str(e)})", "WARNING")
+                        await page.wait_for_timeout(800)
             
             # Extract product name using JavaScript (or use preserved name from API)
             if preserve_product_name:
@@ -1999,6 +2330,7 @@ async def download_pdf_links(
             playwright_files, derived_product_name, category_path, product_path = await download_pdfs_via_playwright(
                 product_url=product_url,
                 pdf_button_selector=pdf_button_selector,
+                click_selectors=click_selectors,
                 output_folder=output_folder,
                 api_key=api_key,
                 cat_name=cat_name,
@@ -2109,6 +2441,16 @@ async def download_pdf_links(
         log_message(f"🔍 Starting file extraction for product page", "INFO")
         log_message(f"📍 Using selectors: {pdf_selector}", "INFO")
 
+        # Normalize selectors: callers typically pass a list, but some entrypoints may pass a string.
+        if isinstance(pdf_selector, list):
+            normalized_selectors = [str(s).strip() for s in pdf_selector if str(s).strip()]
+        else:
+            normalized_selectors = [s.strip() for s in str(pdf_selector or "").split("|") if s.strip()]
+        if not normalized_selectors:
+            log_message("⚠️ No valid pdf_selector provided; skipping PDF extraction", "WARNING")
+            return
+        pdf_selector = normalized_selectors
+
         log_message(f"Name Selector: {pdf_selector[-1]}", "INFO")
 
 
@@ -2116,7 +2458,9 @@ async def download_pdf_links(
         # The second selector will be used as primary, with comprehensive fallback selectors
         product_url = f"{product_url}"
         js_commands = generate_product_name_js_commands(
-            pdf_selector[-1], click_selectors=click_selectors
+            pdf_selector[-1],
+            click_selectors=click_selectors,
+            shadow_collect_selectors=pdf_selector,
         )
         # Crawl the page with CSS selector targeting PDF links
         pdf_result = await crawler.arun(
@@ -2352,6 +2696,7 @@ async def download_pdf_links(
         # Log selected document summary
         if all_files:
             log_message("📋 Selected documents:", "INFO")
+            log_message(f"All files: {all_files}", "INFO")
             for i, doc in enumerate(all_files, 1):
                 log_message(f"   {i}. {doc.get('type', 'Unknown')} ({doc.get('language', 'Unknown')}) - Priority: {doc.get('priority', 'Unknown')}", "INFO")
 
@@ -2528,7 +2873,7 @@ async def download_pdf_links(
                                 file_ext = sniffed_ext
                                 is_pdf = is_pdf_extension(file_ext)
                             # Validate content for PDFs via magic bytes
-                            if is_pdf and len(content) >= 4 and not content.startswith(b'%PDF'):
+                            if not is_pdf and len(content) >= 4 and not content.startswith(b'%PDF'):
                                 log_message(f"⚠️ Skipping non-PDF content from {file_url}", "INFO")
                                 continue
                             

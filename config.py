@@ -60,12 +60,14 @@ DEFAULT_CONFIG = {
             "Supplementary instructions",
             "Design guide",
             "User guide",
+            "Selection guide",
             "Order information",
             "Brochure",
             "Generic",
             "CAD",
             "ZIP",
             "Catalog",
+            "Catalogue"
             "Features Catalogue"
             "EDZ"
         ],
@@ -80,12 +82,13 @@ DEFAULT_CONFIG = {
         "per_type_limits": {
             "Data Sheet": 1,
             "Technical Drawing": 1,
-            "User Manual": 0,
+            "User Manual": 1,
             "Operating manual": 1,
             "Installation Guide": 1,
             "Interface description": 1,
             "User guide": 1,
             "Application guide": 1,
+            "Selection guide": 1,
             "Supplementary instructions": 1,
             "Design guide": 1,
             "Order information": 1,
@@ -93,7 +96,8 @@ DEFAULT_CONFIG = {
             "Generic": 1,
             "CAD": 1,
             "ZIP": 1,
-            "Catalog": 0,
+            "Catalog": 1,
+            "Catalogue": 1,
             "Features Catalogue": 1,
             "EDZ": 1
         }

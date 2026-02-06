@@ -134,60 +134,65 @@ async def create_unified_browser_context(domain_url: str):
         )
         
         page = await context.new_page()
-        
+
+        domain_loaded = False
         try:
-            # Visit the domain and wait for it to fully load
-            await page.goto(domain_url, timeout=30000)
+            # Visit the domain (best-effort). Some domains (e.g. ABB) can intermittently
+            # throw net::ERR_HTTP2_PROTOCOL_ERROR in Chromium; we still want to keep
+            # the context alive so API calls via context.request can proceed.
+            await page.goto(domain_url, timeout=45000, wait_until="domcontentloaded")
+            domain_loaded = True
             _log(f"✅ Successfully loaded page: {domain_url}", "INFO")
-            
-            # Additional delay to ensure all cookies are set
+
+            # Additional delay to ensure all cookies are set (only when navigation succeeds)
             delay = random.uniform(10, 15)
             _log(f"⏳ Waiting {delay:.1f} seconds for cookies to be set...", "INFO")
             await asyncio.sleep(delay)
-            
-            # Extract cookies from the browser context
-            cookies = await context.cookies()
-            cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
-            
-            # Get the user agent from the page
-            user_agent = await page.evaluate("navigator.userAgent")
-            
-            # Prepare canonical headers that mimic a real browser
-            # These will be used for ALL requests (API, HTML, PDF downloads)
-            headers = {
-                'User-Agent': user_agent,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Referer': domain_url,
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-User': '?1',
-                'Pragma': 'no-cache',
-                'Cache-Control': 'no-cache',
-            }
-            
-            _log(f"🍪 Extracted {len(cookies_dict)} cookies from unified browser session", "INFO")
-            _log(f"🔧 Prepared canonical headers for all requests", "INFO")
-            
-            return {
-                'playwright': playwright,
-                'browser': browser,
-                'context': context,
-                'page': page,
-                'headers': headers,
-                'user_agent': user_agent,
-                'cookies': cookies_dict,
-            }
-            
         except Exception as page_error:
             _log(f"⚠️ Error loading page {domain_url}: {str(page_error)}", "WARNING")
-            await browser.close()
-            await playwright.stop()
-            return None
+            _log("➡️ Proceeding without homepage navigation; API requests may still work but cookies may be empty.", "WARNING")
+
+        # Extract cookies from the browser context (may be empty if navigation failed)
+        cookies = await context.cookies()
+        cookies_dict = {cookie['name']: cookie['value'] for cookie in cookies}
+
+        # Get the user agent from the page; if page is still about:blank, fallback to configured UA
+        try:
+            user_agent = await page.evaluate("navigator.userAgent")
+        except Exception:
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+
+        # Prepare canonical headers that mimic a real browser
+        # These will be used for ALL requests (API, HTML, PDF downloads)
+        headers = {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': domain_url,
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-User': '?1',
+            'Pragma': 'no-cache',
+            'Cache-Control': 'no-cache',
+        }
+
+        _log(f"🍪 Extracted {len(cookies_dict)} cookies from unified browser session", "INFO")
+        _log(f"🔧 Prepared canonical headers for all requests", "INFO")
+
+        return {
+            'playwright': playwright,
+            'browser': browser,
+            'context': context,
+            'page': page,
+            'headers': headers,
+            'user_agent': user_agent,
+            'cookies': cookies_dict,
+            'domain_loaded': domain_loaded,
+        }
             
     except ImportError:
         _log("⚠️ Playwright not available", "WARNING")
@@ -2696,7 +2701,6 @@ async def download_pdf_links(
         # Log selected document summary
         if all_files:
             log_message("📋 Selected documents:", "INFO")
-            log_message(f"All files: {all_files}", "INFO")
             for i, doc in enumerate(all_files, 1):
                 log_message(f"   {i}. {doc.get('type', 'Unknown')} ({doc.get('language', 'Unknown')}) - Priority: {doc.get('priority', 'Unknown')}", "INFO")
 

@@ -2876,10 +2876,16 @@ async def download_pdf_links(
                             if sniffed_ext:
                                 file_ext = sniffed_ext
                                 is_pdf = is_pdf_extension(file_ext)
-                            # Validate content for PDFs via magic bytes
+                            
+                            # Validate content: must be either PDF or a recognized CAD/document format
                             if not is_pdf and len(content) >= 4 and not content.startswith(b'%PDF'):
-                                log_message(f"⚠️ Skipping non-PDF content from {file_url}", "INFO")
-                                continue
+                                # Allow other recognized file types (DWG, STEP, IGES, DXF, STL, ZIP, etc.)
+                                allowed_extensions = ['dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'stl', 'zip', 'edz']
+                                if file_ext.lower() not in allowed_extensions:
+                                    log_message(f"⚠️ Skipping unrecognized file type '{file_ext}' from {file_url}", "INFO")
+                                    continue
+                                else:
+                                    log_message(f"✅ Accepted non-PDF file type: {file_ext.upper()}", "INFO")
                             
                             # Check if content is identical to any existing file
                             content_hash = hashlib.md5(content).hexdigest()

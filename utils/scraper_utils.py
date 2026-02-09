@@ -418,7 +418,7 @@ async def fetch_products_from_api_via_browser(
             # Extract products from response
             for idx, item in enumerate(data):
                 name = item.get("name", "").strip()
-                referenceNumber = item.get("reference","")
+                referenceNumber = item.get("id_product","")
                 source_url = item.get("source_url", "").strip()
                 with_pdf = item.get("with_pdf", '0')
                 

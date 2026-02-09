@@ -818,8 +818,8 @@ async def crawl_from_sites_csv(input_file: str, api_key: str = None, model: str 
                     await _pdf_tracker.cleanup_unfinished()
                     
                     # Get and log tracker statistics
-                    stats = await _pdf_tracker.get_stats()
-                    log_message(f"📊 PDF Tracker Stats: {stats['total_pdfs']} total, {stats['cleaned']} cleaned, {stats['in_progress']} in progress, {stats['pending_copies']} pending copies", "INFO")
+                    tracker_stats = await _pdf_tracker.get_stats()
+                    log_message(f"📊 PDF Tracker Stats: {tracker_stats['total_pdfs']} total, {tracker_stats['cleaned']} cleaned, {tracker_stats['in_progress']} in progress, {tracker_stats['pending_copies']} pending copies", "INFO")
                     
                     if cat_summaries:
                         os.makedirs("CSVS", exist_ok=True)

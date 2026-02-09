@@ -1971,6 +1971,12 @@ async def download_pdfs_via_playwright(
                 new_tab_count = 0
                 failed_count = 0
                 
+                # Random delay before starting downloads (be polite to servers)
+                import random
+                pre_download_delay = random.uniform(3, 8)
+                log_message(f"⏳ Waiting {pre_download_delay:.1f}s before starting downloads...", "INFO")
+                await page.wait_for_timeout(int(pre_download_delay * 1000))
+                
                 # Click each element and wait for downloads OR new tabs
                 for i, element in enumerate(elements, 1):
                     new_tab = None
@@ -2232,6 +2238,12 @@ async def download_pdfs_via_playwright(
                                 await new_tab.close()
                             except:
                                 pass
+                        
+                        # Random delay between downloads (be polite to servers)
+                        if i < len(elements):
+                            between_delay = random.uniform(2, 5)
+                            log_message(f"⏳ Waiting {between_delay:.1f}s before next download...", "INFO")
+                            await page.wait_for_timeout(int(between_delay * 1000))
                 
                 # Wait for all downloads to complete
                 await page.wait_for_timeout(2000)

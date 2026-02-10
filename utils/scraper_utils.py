@@ -374,11 +374,15 @@ async def fetch_products_from_api_via_browser(
     
     try:
         context = browser_context['context']
-        headers = browser_context['headers']
+        headers = browser_context.get('headers', {}) or {}
         is_empty = True
         
-        # Construct API URL
-        url = f"{API_BASE_URL}?domain={domain_name}&page={page_number}"
+        # Construct API URL (safe encoding)
+        try:
+            from urllib.parse import urlencode
+            url = f"{API_BASE_URL}?{urlencode({'domain': domain_name, 'page': page_number})}"
+        except Exception:
+            url = f"{API_BASE_URL}?domain={domain_name}&page={page_number}"
         _log(f"📡 Fetching products from API via browser: {url}", "INFO")
         
         # Use Playwright's context.request to make the API call
@@ -386,20 +390,72 @@ async def fetch_products_from_api_via_browser(
         api_request = context.request
         
         try:
-            response = await api_request.get(
-                url,
-                headers={
-                    **headers,
-                    'Accept': 'application/json, text/javascript, */*; q=0.01',
-                },
-                timeout=30000
-            )
+            # IMPORTANT: This request is to a DIFFERENT origin than the target domain homepage.
+            # Some WAF/CDN setups will return HTML/challenges when the request headers look like a
+            # same-origin navigation. So we override to a "fetch JSON" style header set here.
+            ua = headers.get("User-Agent") or headers.get("user-agent")
+            api_headers = {
+                "User-Agent": ua or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Accept-Language": headers.get("Accept-Language", "en-US,en;q=0.9"),
+                # Let Playwright manage compression; explicit encodings can cause edge-case issues.
+                "Referer": API_BASE_URL,
+                "Origin": "https://factory-help.online",
+                "Connection": "keep-alive",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
+                "Pragma": "no-cache",
+                "Cache-Control": "no-cache",
+            }
+
+            response = await api_request.get(url, headers=api_headers, timeout=30000)
             
             if response.status != 200:
                 _log(f"⚠️ API returned status {response.status} for {domain_name} page {page_number}", "WARNING")
                 return [], True
-            
-            data = await response.json()
+
+            # Prefer robust JSON parsing: on some hosts/IPs the endpoint may return HTML (WAF),
+            # XSSI-prefixed JSON, or junk whitespace that breaks response.json().
+            data = None
+            body_text = ""
+            content_type = ""
+            try:
+                # Playwright returns headers as a dict
+                resp_headers = response.headers or {}
+                content_type = resp_headers.get("content-type", "") or resp_headers.get("Content-Type", "")
+            except Exception:
+                resp_headers = {}
+
+            try:
+                data = await response.json()
+            except Exception as json_err:
+                try:
+                    body_text = await response.text()
+                except Exception:
+                    body_text = ""
+
+                preview = (body_text or "").strip().replace("\r", " ").replace("\n", " ")
+                if len(preview) > 240:
+                    preview = preview[:240] + "…"
+
+                _log(
+                    f"❌ API JSON parse failed for {domain_name} page {page_number} "
+                    f"(content-type='{content_type}'). First chars: {preview}",
+                    "ERROR",
+                )
+
+                # Try a manual json.loads after stripping common prefixes/BOM.
+                try:
+                    cleaned = (body_text or "").lstrip("\ufeff").lstrip()
+                    if cleaned.startswith(")]}'"):
+                        # XSSI protection prefix (e.g. Angular style)
+                        cleaned = cleaned.split("\n", 1)[-1].lstrip()
+                    data = json.loads(cleaned)
+                except Exception:
+                    # Still not JSON (likely WAF/HTML or upstream error). Treat as empty/end for now.
+                    # Main loop will stop; logs above should make root cause obvious.
+                    return [], True
             
             # if data:
             #     is_empty = False

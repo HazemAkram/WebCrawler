@@ -735,7 +735,7 @@ def get_pdf_size_limit() -> int:
 
 def generate_product_name_js_commands(
     primary_selector: str,
-    click_selectors: list[str] | None = None,
+    click_selectors: list[dict] | None = None,
     shadow_collect_selectors: list[str] | None = None,
 ) -> str:
     """
@@ -743,14 +743,20 @@ def generate_product_name_js_commands(
     
     Args:
         primary_selector (str): The primary CSS selector from CSV configuration
-        click_selectors (list[str] | None): Optional selectors to click before extraction
+        click_selectors (list[dict] | None): Optional selectors to click before extraction.
+            Each entry is a dict with "selector" (str) and optional "index" (int|None).
+            When "index" is set, querySelectorAll is used and the element at that index is clicked.
         
     Returns:
         str: JavaScript code for product name extraction
     """
     click_selectors = click_selectors or []
     shadow_collect_selectors = [s for s in (shadow_collect_selectors or []) if isinstance(s, str) and s.strip()]
-    serialized_selectors = json.dumps(click_selectors, ensure_ascii=False)
+    # Serialize click_selectors for JS: list of {selector, index} objects.
+    serialized_selectors = json.dumps(
+        [{"selector": e.get("selector", ""), "index": e.get("index")} if isinstance(e, dict) else {"selector": str(e), "index": None} for e in click_selectors],
+        ensure_ascii=False,
+    )
     serialized_shadow_selectors = json.dumps(shadow_collect_selectors, ensure_ascii=False)
     return f"""
 
@@ -992,17 +998,34 @@ def generate_product_name_js_commands(
             console.log('[JS] No pre-click selectors provided.');
         }}
 
-        for (const cssSelector of clickSelectors) {{
+        for (const entry of clickSelectors) {{
+            const cssSelector = (typeof entry === 'object' && entry !== null) ? entry.selector : entry;
+            const targetIndex = (typeof entry === 'object' && entry !== null) ? entry.index : null;
             if (!cssSelector || !cssSelector.trim()) {{
                 continue;
             }}
             try {{
-                const button = __crawlerDeepQueryFirst(cssSelector) || document.querySelector(cssSelector);
-                if (button) {{
-                    console.log('[JS] Clicking pre-download selector:', cssSelector);
-                    button.click();
+                if (targetIndex !== null && targetIndex !== undefined) {{
+                    // Explicit index provided: use querySelectorAll and pick the Nth element
+                    const allMatches = document.querySelectorAll(cssSelector);
+                    if (allMatches.length > targetIndex) {{
+                        console.log('[JS] Clicking pre-download selector:', cssSelector, 'at index', targetIndex);
+                        allMatches[targetIndex].click();
+                    }} else if (allMatches.length > 0) {{
+                        console.log('[JS] Pre-download selector index', targetIndex, 'out of range (found', allMatches.length, '), clicking first:', cssSelector);
+                        allMatches[0].click();
+                    }} else {{
+                        console.log('[JS] Pre-download selector not found:', cssSelector);
+                    }}
                 }} else {{
-                    console.log('[JS] Pre-download selector not found:', cssSelector);
+                    // No index: use original behavior (first deep match or querySelector)
+                    const button = __crawlerDeepQueryFirst(cssSelector) || document.querySelector(cssSelector);
+                    if (button) {{
+                        console.log('[JS] Clicking pre-download selector:', cssSelector);
+                        button.click();
+                    }} else {{
+                        console.log('[JS] Pre-download selector not found:', cssSelector);
+                    }}
                 }}
             }} catch (error) {{
                 console.log('[JS] Error clicking selector', cssSelector, ':', error.message);
@@ -1655,7 +1678,7 @@ async def get_browser_cookies(crawler: AsyncWebCrawler) -> dict[str, str]:
 async def download_pdfs_via_playwright(
     product_url: str,
     pdf_button_selector: str,
-    click_selectors: list[str],
+    click_selectors: list[dict],
     output_folder: str,
     api_key: str,
     cat_name: str = "Uncategorized",
@@ -1669,6 +1692,7 @@ async def download_pdfs_via_playwright(
     Args:
         product_url: URL of the product page
         pdf_button_selector: CSS selector for download links/buttons
+        click_selectors: List of dicts with "selector" (str) and optional "index" (int|None).
         output_folder: Base output directory for downloads
         api_key: API key for potential future use
         cat_name: Category name for folder organization
@@ -1820,11 +1844,21 @@ async def download_pdfs_via_playwright(
 
             # Optional pre-clicks (passed from CSV) to reveal downloads or switch tabs before scraping download buttons.
             # We intentionally do this AFTER cookie dismissal and BEFORE product name extraction / download element lookup.
-            normalized_click_selectors = [s.strip() for s in (click_selectors or []) if isinstance(s, str) and s.strip()]
+            # Each entry is a dict {"selector": str, "index": int|None}.
+            normalized_click_selectors = []
+            for entry in (click_selectors or []):
+                if isinstance(entry, dict):
+                    sel = entry.get("selector", "").strip()
+                    if sel:
+                        normalized_click_selectors.append({"selector": sel, "index": entry.get("index")})
+                elif isinstance(entry, str) and entry.strip():
+                    normalized_click_selectors.append({"selector": entry.strip(), "index": None})
             if normalized_click_selectors:
                 log_message(f"🖱️ Running {len(normalized_click_selectors)} pre-click selector(s) before download discovery", "INFO")
                 known_pages = set(context.pages)
-                for sel_idx, sel in enumerate(normalized_click_selectors, 1):
+                for sel_idx, entry in enumerate(normalized_click_selectors, 1):
+                    sel = entry["selector"]
+                    explicit_index = entry.get("index")
                     try:
                         locator = page.locator(sel)
                         count = await locator.count()
@@ -1834,9 +1868,26 @@ async def download_pdfs_via_playwright(
                             continue
 
                         clicked = False
-                        # If selector matches multiple elements, only click the one whose innerText is "FILES".
-                        # This avoids accidentally clicking unrelated tab buttons with the same selector.
-                        if count > 1:
+
+                        if explicit_index is not None:
+                            # --- Explicit index provided (e.g. "div.v-btn__content|2") ---
+                            if explicit_index < count:
+                                el = locator.nth(explicit_index)
+                                try:
+                                    await el.scroll_into_view_if_needed(timeout=3000)
+                                    await el.click(timeout=8000)
+                                    clicked = True
+                                    log_message(f"✅ Pre-clicked ({sel_idx}/{len(normalized_click_selectors)}) at index {explicit_index}: {sel}", "INFO")
+                                except Exception as e:
+                                    log_message(f"⚠️ Pre-click failed at index {explicit_index} ({sel_idx}/{len(normalized_click_selectors)}): {sel} ({e})", "WARNING")
+                            else:
+                                log_message(
+                                    f"⏭️ Pre-click selector index {explicit_index} out of range (found {count}) ({sel_idx}/{len(normalized_click_selectors)}): {sel}",
+                                    "INFO",
+                                )
+                        elif count > 1:
+                            # If selector matches multiple elements, only click the one whose innerText is "FILES".
+                            # This avoids accidentally clicking unrelated tab buttons with the same selector.
                             target_idx = None
                             for i in range(min(count, 25)):
                                 el = locator.nth(i)
@@ -1890,9 +1941,10 @@ async def download_pdfs_via_playwright(
                                 pass
 
                         if not clicked:
-                            # Last resort: force click first match (can help for offscreen overlays / custom controls).
+                            # Last resort: force click first match (or explicit index if given).
                             try:
-                                await locator.first.click(timeout=8000, force=True)
+                                target = locator.nth(explicit_index) if explicit_index is not None else locator.first
+                                await target.click(timeout=8000, force=True)
                                 clicked = True
                                 log_message(f"✅ Pre-clicked (forced) ({sel_idx}/{len(normalized_click_selectors)}): {sel}", "INFO")
                             except Exception as force_err:
@@ -2297,7 +2349,7 @@ async def download_pdf_links(
         api_key: str = None,
         cat_name: str = "Uncategorized",
         pdf_button_selector: str = "",
-        click_selectors: list[str] | None = None,
+        click_selectors: list[dict] | None = None,
         preserve_product_name: str = None,
         ):
     
@@ -2319,12 +2371,21 @@ async def download_pdf_links(
         api_key: API key for LLM provider
         cat_name: Category name from CSV for folder organization (defaults to "Uncategorized")
         pdf_button_selector: CSS selector for PDF download buttons
-        click_selectors: List of CSS selectors to click before extraction via JS commands
+        click_selectors: List of dicts with "selector" (str) and optional "index" (int|None) to click before extraction
         preserve_product_name: If provided, use this name instead of extracting from HTML (for API mode)
     """
 
 
-    click_selectors = [selector.strip() for selector in (click_selectors or []) if selector and selector.strip()]
+    # Normalize click_selectors: ensure list of dicts with "selector" and "index" keys
+    normalized_click = []
+    for entry in (click_selectors or []):
+        if isinstance(entry, dict):
+            sel = entry.get("selector", "").strip()
+            if sel:
+                normalized_click.append({"selector": sel, "index": entry.get("index")})
+        elif isinstance(entry, str) and entry.strip():
+            normalized_click.append({"selector": entry.strip(), "index": None})
+    click_selectors = normalized_click
 
 
     # Global dictionary to track downloaded files with their file paths across all products

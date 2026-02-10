@@ -93,7 +93,18 @@ def read_sites_from_csv(input_file):
             # Parse selectors (common to both modes)
             pdf_list = [s.strip() for s in row.get('pdf_selector', '').split('|') if s.strip()]
             pdf_button_selector = row.get('pdf_button_selector', '').strip()
-            to_click_list = [s.strip() for s in row.get('to_click', '').split('|') if s.strip()]
+            # Parse to_click with optional element index.
+            # Format: "selector|N" clicks the Nth element matching selector (0-based).
+            # Multiple entries are separated by "|": "sel1|sel2" or "sel1|2|sel2".
+            # A pure-numeric part after "|" is treated as the index for the preceding selector.
+            raw_to_click = [s.strip() for s in row.get('to_click', '').split('|') if s.strip()]
+            to_click_list = []
+            for part in raw_to_click:
+                if part.isdigit() and to_click_list:
+                    # Attach as index to the preceding selector entry
+                    to_click_list[-1]["index"] = int(part)
+                else:
+                    to_click_list.append({"selector": part, "index": None})
             
             # ---- NEW (API PAGE RANGE) ----
             page_number_raw = row.get('page_number', '').strip()

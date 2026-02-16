@@ -1473,6 +1473,14 @@ def infer_extension_from_url_and_headers(url: str, headers: dict = None) -> str:
         content_type = headers.get('content-type', '').lower().split(';')[0].strip()
         if content_type in content_type_map:
             return content_type_map[content_type]
+
+        # If server provides a filename, trust that over URL endpoints like Download.aspx
+        cd = headers.get('content-disposition') or headers.get('Content-Disposition') or ''
+        cd_filename = parse_content_disposition_filename(cd) if cd else ""
+        if cd_filename and '.' in cd_filename:
+            ext_from_cd = cd_filename.rsplit('.', 1)[-1].lower().strip()
+            if ext_from_cd and len(ext_from_cd) <= 5 and ext_from_cd.isalnum():
+                return ext_from_cd
     
     # Fall back to URL extension
     parsed = urlparse(url)
@@ -1481,6 +1489,10 @@ def infer_extension_from_url_and_headers(url: str, headers: dict = None) -> str:
         ext = path.rsplit('.', 1)[-1]
         # Validate extension (max 5 chars, alphanumeric)
         if ext and len(ext) <= 5 and ext.isalnum():
+            # Ignore common endpoint extensions that rarely reflect the actual file type.
+            # Example: ABB serves PDFs/ZIPs via Download.aspx.
+            if ext in {"aspx", "php", "jsp", "ashx", "cgi"}:
+                return "pdf"
             return ext
     
     return ''
@@ -1562,24 +1574,28 @@ def sniff_extension_from_bytes(content: bytes) -> str:
     if not content:
         return ""
     head = content[:512]
+    # Strip BOM and leading whitespace/nulls (some servers prepend whitespace/newlines before %PDF)
+    if head.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
+        head = head[3:]
+    head_stripped = head.lstrip(b"\x00\t\r\n\f ")
     # PDF
-    if head.startswith(b"%PDF"):
+    if head_stripped.startswith(b"%PDF"):
         return "pdf"
     # ZIP (also common for many CAD package downloads)
-    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
+    if head_stripped.startswith(b"PK\x03\x04") or head_stripped.startswith(b"PK\x05\x06") or head_stripped.startswith(b"PK\x07\x08"):
         return "zip"
     # STEP/STP
-    if b"ISO-10303-21" in head or b"STEP-File" in head:
+    if b"ISO-10303-21" in head_stripped or b"STEP-File" in head_stripped:
         return "step"
     # IGES: often starts with 'S      1' in ASCII fixed-width records
-    if head[:1] == b'S' and b"IGES" in head:
+    if head_stripped[:1] == b'S' and b"IGES" in head_stripped:
         return "iges"
     # DWG: AC10xx signature
-    if head.startswith(b"AC1"):
+    if head_stripped.startswith(b"AC1"):
         return "dwg"
     # DXF: ASCII begins with 0\nSECTION or 999\n
     try:
-        txt = head.decode(errors='ignore')
+        txt = head_stripped.decode(errors='ignore')
         if txt.lstrip().startswith("0\nSECTION") or txt.lstrip().startswith("999\n") or txt.lstrip().upper().startswith("SECTION"):
             return "dxf"
         # STL ASCII: starts with 'solid'
@@ -3008,7 +3024,9 @@ async def download_pdf_links(
                                 is_pdf = is_pdf_extension(file_ext)
                             
                             # Validate content: must be either PDF or a recognized CAD/document format
-                            if not is_pdf and len(content) >= 4 and not content.startswith(b'%PDF'):
+                            # Some servers prepend whitespace/newlines before %PDF, so strip before checking.
+                            pdf_magic = content.lstrip(b"\x00\t\r\n\f ").startswith(b"%PDF") if content else False
+                            if not is_pdf and len(content) >= 4 and not pdf_magic:
                                 # Allow other recognized file types (DWG, STEP, IGES, DXF, STL, ZIP, etc.)
                                 allowed_extensions = ['dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'stl', 'zip', 'edz']
                                 if file_ext.lower() not in allowed_extensions:

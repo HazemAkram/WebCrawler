@@ -1492,7 +1492,7 @@ def infer_extension_from_url_and_headers(url: str, headers: dict = None) -> str:
             # Ignore common endpoint extensions that rarely reflect the actual file type.
             # Example: ABB serves PDFs/ZIPs via Download.aspx.
             if ext in {"aspx", "php", "jsp", "ashx", "cgi"}:
-                return "pdf"
+                return ""
             return ext
     
     return ''
@@ -1613,6 +1613,32 @@ def sniff_extension_from_bytes(content: bytes) -> str:
                 return "stl"
         except Exception:
             pass
+    return ""
+
+
+def extract_direct_file_url_from_html(html_text: str) -> str:
+    """
+    Some vendors (e.g. ABB library Download.aspx) return an HTML viewer page
+    that embeds the real file URL (PDF/ZIP) in an iframe/src or link.
+    This helper extracts the first likely direct file URL.
+    """
+    if not html_text:
+        return ""
+    try:
+        # Prefer iframe src (ABB uses this)
+        m = re.search(r'<iframe[^>]+src=["\']([^"\']+)["\']', html_text, re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+        # Fallback: any direct link to common file types
+        m = re.search(
+            r'https?://[^"\'>\s]+\.(pdf|zip|dwg|dxf|step|stp|iges|igs)(\?[^"\'>\s]*)?',
+            html_text,
+            re.IGNORECASE
+        )
+        if m:
+            return m.group(0).strip()
+    except Exception:
+        return ""
     return ""
 
 
@@ -2866,7 +2892,9 @@ async def download_pdf_links(
 
         request_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            # For direct file endpoints like ABB `Download.aspx`, prefer binary file responses (PDF/ZIP)
+            # over HTML viewer pages.
+            "Accept": "application/pdf,application/zip,application/octet-stream,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",
             "Referer": product_url,
@@ -2874,7 +2902,7 @@ async def download_pdf_links(
             "Upgrade-Insecure-Requests": "1",
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Site": "cross-site",
             "Sec-Fetch-User": "?1",
             "Pragma": "no-cache",
             "Cache-Control": "no-cache",
@@ -3010,6 +3038,31 @@ async def download_pdf_links(
                             
                             # Read the content
                             content = await resp.read()
+
+                            # ABB-style HTML viewer: extract the real file URL and download that instead.
+                            # (aiohttp often gets the HTML wrapper, while browsers/requests get the signed PDF.)
+                            content_type = (resp.headers.get('content-type') or '').lower()
+                            if content_type.startswith('text/html') or 'application/xhtml' in content_type:
+                                try:
+                                    html_text = content.decode('utf-8', errors='ignore')
+                                except Exception:
+                                    html_text = ""
+                                direct_url = extract_direct_file_url_from_html(html_text)
+                                if direct_url:
+                                    direct_url = direct_url.replace("&amp;", "&")
+                                    async with session.get(
+                                        direct_url,
+                                        headers={**request_headers, "Referer": file_url, "User-Agent": request_headers["User-Agent"]},
+                                        allow_redirects=True
+                                    ) as resp2:
+                                        if resp2.status == 200:
+                                            content = await resp2.read()
+                                            refined_ext2 = infer_extension_from_url_and_headers(direct_url, resp2.headers)
+                                            if refined_ext2:
+                                                file_ext = refined_ext2
+                                                is_pdf = is_pdf_extension(file_ext)
+                                        else:
+                                            log_message(f"⚠️ Direct file URL from HTML failed (Status: {resp2.status}): {direct_url}", "INFO")
                             
                             # Check file size after reading content (fallback for servers that don't provide content-length)
                             content_size_mb = len(content) / (1024 * 1024)

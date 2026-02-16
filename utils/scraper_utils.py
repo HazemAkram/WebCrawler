@@ -1873,6 +1873,7 @@ async def download_pdfs_via_playwright(
                 cookie_selectors = [
                     'button:has-text("Accept")',
                     'button:has-text("Accept all")',
+                    'button:has-text("Allow all")',
                     'button:has-text("Agree")',
                     'button:has-text("OK")',
                     'button:has-text("I agree")',
@@ -2590,7 +2591,7 @@ async def download_pdf_links(
 
         # Enhanced JavaScript product name extraction using helper function
         # The second selector will be used as primary, with comprehensive fallback selectors
-        product_url = f"{product_url}#documents"
+        product_url = f"{product_url}"
         js_commands = generate_product_name_js_commands(
             pdf_selector[-1],
             click_selectors=click_selectors,

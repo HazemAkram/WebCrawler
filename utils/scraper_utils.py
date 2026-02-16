@@ -3079,6 +3079,12 @@ async def download_pdf_links(
                             # Validate content: must be either PDF or a recognized CAD/document format
                             # Some servers prepend whitespace/newlines before %PDF, so strip before checking.
                             pdf_magic = content.lstrip(b"\x00\t\r\n\f ").startswith(b"%PDF") if content else False
+                            
+                            # Safety net: if bytes are clearly PDF, force extension regardless of what headers said
+                            if pdf_magic and not is_pdf:
+                                file_ext = "pdf"
+                                is_pdf = True
+                            
                             if not is_pdf and len(content) >= 4 and not pdf_magic:
                                 # Allow other recognized file types (DWG, STEP, IGES, DXF, STL, ZIP, etc.)
                                 allowed_extensions = ['dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'stl', 'zip', 'edz']

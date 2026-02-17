@@ -2939,6 +2939,14 @@ async def download_pdf_links(
                 if file_url in download_pdf_links.downloaded_files:
                     previous_path = download_pdf_links.downloaded_files[file_url]
                     if os.path.exists(previous_path):
+                        # If URL-based extension detection failed (e.g. Download.aspx),
+                        # infer from the previously saved file's actual extension.
+                        if not file_ext and previous_path:
+                            prev_ext = os.path.splitext(previous_path)[1].lstrip('.')
+                            if prev_ext:
+                                file_ext = prev_ext
+                                is_pdf = is_pdf_extension(file_ext)
+                                file_type_label = "PDF" if is_pdf else file_ext.upper()
                         try:
                             # Always use allowed_types from config for filename base
                             filename = make_config_type_filename(file_type, file_language, file_ext or 'bin', productPath)
@@ -3019,16 +3027,8 @@ async def download_pdf_links(
                         raise last_exc
                     async with resp:
                         if resp.status == 200:
-                            # Refine extension from response headers
-                            refined_ext = infer_extension_from_url_and_headers(file_url, resp.headers)
-                            if refined_ext:
-                                file_ext = refined_ext
-                                is_pdf = is_pdf_extension(file_ext)
-                            # Attempt filename from Content-Disposition
-                            cd_header = resp.headers.get('content-disposition') or resp.headers.get('Content-Disposition')
-                            cd_filename = parse_content_disposition_filename(cd_header) if cd_header else ""
-                            
-                            # Check file size before downloading
+                            # ── Step 1: Download the content first ──────────────────
+                            # Check file size before downloading (from Content-Length header)
                             content_length = resp.headers.get('content-length')
                             if content_length:
                                 file_size_mb = int(content_length) / (1024 * 1024)
@@ -3036,13 +3036,13 @@ async def download_pdf_links(
                                     log_message(f"⚠️ Skipping file larger than {MAX_SIZE_MB}MB: {file_url} (Size: {file_size_mb:.2f}MB)", "INFO")
                                     continue
                             
-                            # Read the content
                             content = await resp.read()
 
-                            # ABB-style HTML viewer: extract the real file URL and download that instead.
-                            # (aiohttp often gets the HTML wrapper, while browsers/requests get the signed PDF.)
-                            content_type = (resp.headers.get('content-type') or '').lower()
-                            if content_type.startswith('text/html') or 'application/xhtml' in content_type:
+                            # ABB-style HTML viewer: the initial response may be an HTML
+                            # wrapper with the real file URL embedded in an <iframe>.
+                            resp_ct = (resp.headers.get('content-type') or '').lower()
+                            final_headers = resp.headers  # track which response gave us the real content
+                            if resp_ct.startswith('text/html') or 'application/xhtml' in resp_ct:
                                 try:
                                     html_text = content.decode('utf-8', errors='ignore')
                                 except Exception:
@@ -3057,36 +3057,57 @@ async def download_pdf_links(
                                     ) as resp2:
                                         if resp2.status == 200:
                                             content = await resp2.read()
-                                            refined_ext2 = infer_extension_from_url_and_headers(direct_url, resp2.headers)
-                                            if refined_ext2:
-                                                file_ext = refined_ext2
-                                                is_pdf = is_pdf_extension(file_ext)
+                                            resp_ct = (resp2.headers.get('content-type') or '').lower()
+                                            final_headers = resp2.headers
                                         else:
                                             log_message(f"⚠️ Direct file URL from HTML failed (Status: {resp2.status}): {direct_url}", "INFO")
-                            
-                            # Check file size after reading content (fallback for servers that don't provide content-length)
+
+                            # Check file size after reading content
                             content_size_mb = len(content) / (1024 * 1024)
                             if content_size_mb > MAX_SIZE_MB:
                                 log_message(f"⚠️ Skipping file larger than {MAX_SIZE_MB}MB: {file_url} (Size: {content_size_mb:.2f}MB)", "INFO")
                                 continue
+
+                            # ── Step 2: Determine extension from actual response ────
+                            # Now that we have the real content, figure out what the file actually is.
+                            # Priority: magic bytes > Content-Type headers > Content-Disposition > URL path
                             
-                            # Validate and sniff extension from bytes
+                            # 2a. Magic bytes (most reliable — looks at actual file content)
                             sniffed_ext = sniff_extension_from_bytes(content)
                             if sniffed_ext:
                                 file_ext = sniffed_ext
                                 is_pdf = is_pdf_extension(file_ext)
-                            
-                            # Validate content: must be either PDF or a recognized CAD/document format
-                            # Some servers prepend whitespace/newlines before %PDF, so strip before checking.
+
+                            # 2b. Whitespace-tolerant PDF check
                             pdf_magic = content.lstrip(b"\x00\t\r\n\f ").startswith(b"%PDF") if content else False
-                            
-                            # Safety net: if bytes are clearly PDF, force extension regardless of what headers said
                             if pdf_magic and not is_pdf:
                                 file_ext = "pdf"
                                 is_pdf = True
-                            
+
+                            # 2c. Content-Type header (if byte sniffing didn't identify it)
+                            if not file_ext:
+                                refined_ext = infer_extension_from_url_and_headers(file_url, final_headers)
+                                if refined_ext:
+                                    file_ext = refined_ext
+                                    is_pdf = is_pdf_extension(file_ext)
+
+                            # 2d. Content-Disposition filename
+                            cd_header = final_headers.get('content-disposition') or final_headers.get('Content-Disposition') or ''
+                            cd_filename = parse_content_disposition_filename(cd_header) if cd_header else ""
+                            if not file_ext and cd_filename and '.' in cd_filename:
+                                cd_ext = cd_filename.rsplit('.', 1)[-1].lower().strip()
+                                if cd_ext and len(cd_ext) <= 5 and cd_ext.isalnum():
+                                    file_ext = cd_ext
+                                    is_pdf = is_pdf_extension(file_ext)
+
+                            # ── Step 3: Decide whether to keep or skip ──────────────
+                            # Skip if the content is clearly an HTML page (error page, viewer we couldn't parse, etc.)
+                            if not is_pdf and not file_ext:
+                                if content[:200].lstrip(b"\xef\xbb\xbf \t\r\n").startswith((b'<!DOCTYPE', b'<html', b'<HTML')):
+                                    log_message(f"⚠️ Skipping HTML response from {file_url}", "INFO")
+                                    continue
+
                             if not is_pdf and len(content) >= 4 and not pdf_magic:
-                                # Allow other recognized file types (DWG, STEP, IGES, DXF, STL, ZIP, etc.)
                                 allowed_extensions = ['dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'stl', 'zip', 'edz']
                                 if file_ext.lower() not in allowed_extensions:
                                     log_message(f"⚠️ Skipping unrecognized file type '{file_ext}' from {file_url}", "INFO")

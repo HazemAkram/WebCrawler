@@ -1473,7 +1473,7 @@ def infer_extension_from_url_and_headers(url: str, headers: dict = None) -> str:
         content_type = headers.get('content-type', '').lower().split(';')[0].strip()
         if content_type in content_type_map:
             return content_type_map[content_type]
-
+    
         # If server provides a filename, trust that over URL endpoints like Download.aspx
         cd = headers.get('content-disposition') or headers.get('Content-Disposition') or ''
         cd_filename = parse_content_disposition_filename(cd) if cd else ""
@@ -3070,47 +3070,29 @@ async def download_pdf_links(
                                 log_message(f"⚠️ Skipping file larger than {MAX_SIZE_MB}MB: {file_url} (Size: {content_size_mb:.2f}MB)", "INFO")
                                 continue
                             
-                            # ----- Determine real file type from bytes (download-first approach) -----
-                            # 1. Sniff extension from magic bytes (most reliable)
+                            # Validate and sniff extension from bytes
                             sniffed_ext = sniff_extension_from_bytes(content)
                             if sniffed_ext:
                                 file_ext = sniffed_ext
                                 is_pdf = is_pdf_extension(file_ext)
                             
-                            # 2. Extra safety: strip whitespace and check for %PDF magic
+                            # Validate content: must be either PDF or a recognized CAD/document format
+                            # Some servers prepend whitespace/newlines before %PDF, so strip before checking.
                             pdf_magic = content.lstrip(b"\x00\t\r\n\f ").startswith(b"%PDF") if content else False
+                            
+                            # Safety net: if bytes are clearly PDF, force extension regardless of what headers said
                             if pdf_magic and not is_pdf:
                                 file_ext = "pdf"
                                 is_pdf = True
                             
-                            # 3. If still unknown, check Content-Disposition filename from the response
-                            if not file_ext and cd_filename and '.' in cd_filename:
-                                ext_from_cd = cd_filename.rsplit('.', 1)[-1].lower().strip()
-                                if ext_from_cd and len(ext_from_cd) <= 5 and ext_from_cd.isalnum():
-                                    file_ext = ext_from_cd
-                                    is_pdf = is_pdf_extension(file_ext)
-                            
-                            # 4. Final validation: only skip if content is clearly not a recognized format
-                            allowed_extensions = ['pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'stl', 'zip', 'edz']
-                            if not is_pdf and not pdf_magic:
-                                if file_ext and file_ext.lower() in allowed_extensions:
+                            if not is_pdf and len(content) >= 4 and not pdf_magic:
+                                # Allow other recognized file types (DWG, STEP, IGES, DXF, STL, ZIP, etc.)
+                                allowed_extensions = ['dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'stl', 'zip', 'edz']
+                                if file_ext.lower() not in allowed_extensions:
+                                    log_message(f"⚠️ Skipping unrecognized file type '{file_ext}' from {file_url}", "INFO")
+                                    continue
+                                else:
                                     log_message(f"✅ Accepted non-PDF file type: {file_ext.upper()}", "INFO")
-                                elif not file_ext or file_ext.lower() not in allowed_extensions:
-                                    # Last resort: check if content is HTML (skip) or binary (save as pdf if large enough)
-                                    is_html = content[:500].lstrip().startswith((b'<!DOCTYPE', b'<html', b'<HTML'))
-                                    if is_html:
-                                        log_message(f"⚠️ Skipping HTML response from {file_url}", "INFO")
-                                        continue
-                                    # If content is substantial (>10KB) and not HTML, assume it's a valid document
-                                    # and save with whatever extension we have (or 'pdf' as default for ASPX-type endpoints)
-                                    if len(content) > 10240:
-                                        if not file_ext:
-                                            file_ext = "pdf"
-                                            is_pdf = True
-                                            log_message(f"📎 Unknown file type from {file_url}, content is {len(content)/1024:.0f}KB — saving as PDF", "INFO")
-                                    else:
-                                        log_message(f"⚠️ Skipping small unrecognized file ({len(content)} bytes) from {file_url}", "INFO")
-                                        continue
                             
                             # Check if content is identical to any existing file
                             content_hash = hashlib.md5(content).hexdigest()
@@ -3121,7 +3103,7 @@ async def download_pdf_links(
                             download_pdf_links.content_hashes.add(content_hash)
                             
                             # Always use allowed_types from config for filename base
-                            filename = make_config_type_filename(file_type, file_language, file_ext or 'pdf', productPath)
+                            filename = make_config_type_filename(file_type, file_language, file_ext or 'bin', productPath)
 
                             # Filename is already unique and final from make_config_type_filename
                             save_path = os.path.join(productPath, filename)
